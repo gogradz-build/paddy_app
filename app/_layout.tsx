@@ -2,6 +2,7 @@ import { useFonts } from 'expo-font';
 import { Stack } from "expo-router";
 
 export default function RootLayout() {
+  
   const [fontsLoaded] = useFonts({
         'Poppins-Thin': require('../assets/fonts/Poppins-Thin.ttf'),
         'Poppins-ThinItalic': require('../assets/fonts/Poppins-ThinItalic.ttf'),
