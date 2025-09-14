@@ -1,27 +1,82 @@
 import { useFonts } from 'expo-font';
-import { Stack } from "expo-router";
+import { SplashScreen, Stack } from "expo-router";
+import { StatusBar } from 'expo-status-bar';
+import { useCallback, useEffect } from 'react';
+import { Text } from 'react-native';
+
+
+SplashScreen.preventAutoHideAsync();
 
 export default function RootLayout() {
+  const [fontsLoaded, fontError] = useFonts({
+    
+    'Inter-Black': require('../assets/fonts/Inter_18pt-Black.ttf'),
+    'Inter-BlackItalic': require('../assets/fonts/Inter_18pt-BlackItalic.ttf'),
+    'Inter-Bold': require('../assets/fonts/Inter_18pt-Bold.ttf'),
+    'Inter-BoldItalic': require('../assets/fonts/Inter_18pt-BoldItalic.ttf'),
+    'Inter-ExtraBold': require('../assets/fonts/Inter_18pt-ExtraBold.ttf'),
+    'Inter-ExtraBoldItalic': require('../assets/fonts/Inter_18pt-ExtraBoldItalic.ttf'),
+    'Inter-ExtraLight': require('../assets/fonts/Inter_18pt-ExtraLight.ttf'),
+    'Inter-ExtraLightItalic': require('../assets/fonts/Inter_18pt-ExtraLightItalic.ttf'),
+    'Inter-Italic': require('../assets/fonts/Inter_18pt-Italic.ttf'),
+    'Inter-Light': require('../assets/fonts/Inter_18pt-Light.ttf'),
+    'Inter-LightItalic': require('../assets/fonts/Inter_18pt-LightItalic.ttf'),
+    'Inter-Medium': require('../assets/fonts/Inter_18pt-Medium.ttf'),
+    'Inter-Regular': require('../assets/fonts/Inter_18pt-Regular.ttf'),
+    'Inter-SemiBold': require('../assets/fonts/Inter_18pt-SemiBold.ttf'),
+    'Inter-Thin': require('../assets/fonts/Inter_18pt-Thin.ttf'),
+    'Inter-ThinItalic': require('../assets/fonts/Inter_18pt-ThinItalic.ttf'),
+    
+    
+    'Inter-Bold-24': require('../assets/fonts/Inter_24pt-Bold.ttf'),
+    'Inter-BoldItalic-24': require('../assets/fonts/Inter_24pt-BoldItalic.ttf'),
+  });
+
+  const onLayoutRootView = useCallback(async () => {
+    if (fontsLoaded || fontError) {
+      
+      if (fontsLoaded) {
+        (Text as any).defaultProps = {
+          ...(Text as any).defaultProps,
+          style: { fontFamily: 'Inter-Regular' },
+        };
+      }
+      
+      
+      await SplashScreen.hideAsync();
+    }
+  }, [fontsLoaded, fontError]);
+
+  useEffect(() => {
+    onLayoutRootView();
+  }, [onLayoutRootView]);
+
   
-  const [fontsLoaded] = useFonts({
-        'Poppins-Thin': require('../assets/fonts/Poppins-Thin.ttf'),
-        'Poppins-ThinItalic': require('../assets/fonts/Poppins-ThinItalic.ttf'),
-        'Poppins-ExtraLight': require('../assets/fonts/Poppins-ExtraLight.ttf'),
-        'Poppins-ExtraLightItalic': require('../assets/fonts/Poppins-ExtraLightItalic.ttf'),
-        'Poppins-Light': require('../assets/fonts/Poppins-Light.ttf'),
-        'Poppins-LightItalic': require('../assets/fonts/Poppins-LightItalic.ttf'),
-        'Poppins-Regular': require('../assets/fonts/Poppins-Regular.ttf'),
-        'Poppins-Italic': require('../assets/fonts/Poppins-Italic.ttf'),
-        'Poppins-Medium': require('../assets/fonts/Poppins-Medium.ttf'),
-        'Poppins-MediumItalic': require('../assets/fonts/Poppins-MediumItalic.ttf'),
-        'Poppins-SemiBold': require('../assets/fonts/Poppins-SemiBold.ttf'),
-        'Poppins-SemiBoldItalic': require('../assets/fonts/Poppins-SemiBoldItalic.ttf'),
-        'Poppins-Bold': require('../assets/fonts/Poppins-Bold.ttf'),
-        'Poppins-BoldItalic': require('../assets/fonts/Poppins-BoldItalic.ttf'),
-        'Poppins-ExtraBold': require('../assets/fonts/Poppins-ExtraBold.ttf'),
-        'Poppins-ExtraBoldItalic': require('../assets/fonts/Poppins-ExtraBoldItalic.ttf'),
-        'Poppins-Black': require('../assets/fonts/Poppins-Black.ttf'),
-        'Poppins-BlackItalic': require('../assets/fonts/Poppins-BlackItalic.ttf'),
-    });
-  return <Stack />;
+  if (!fontsLoaded && !fontError) {
+    return null;
+  }
+
+  
+  if (fontError) {
+    console.error('Font loading error:', fontError);
+    
+  }
+
+  return (
+    <>
+      <StatusBar 
+        style="dark" 
+        backgroundColor="transparent" 
+        translucent={false}
+      />
+      <Stack 
+        screenOptions={{ 
+          headerShown: false,
+          animation: 'slide_from_right', 
+        }}
+      >
+        
+      </Stack>
+    </>
+  );
 }
