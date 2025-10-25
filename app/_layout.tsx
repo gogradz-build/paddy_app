@@ -1,3 +1,5 @@
+import { ToasterProvider } from '@/assets/ui/toaster';
+import { UserProvider } from '@/contexts/UserContext';
 import { useFonts } from 'expo-font';
 import { SplashScreen, Stack } from "expo-router";
 import { StatusBar } from 'expo-status-bar';
@@ -63,20 +65,20 @@ export default function RootLayout() {
   }
 
   return (
-    <>
-      <StatusBar 
-        style="dark" 
-        backgroundColor="transparent" 
-        translucent={false}
-      />
-      <Stack 
-        screenOptions={{ 
-          headerShown: false,
-          animation: 'slide_from_right', 
-        }}
-      >
-        
-      </Stack>
-    </>
+     <UserProvider>
+      <ToasterProvider>
+        <StatusBar 
+          style="dark" 
+          backgroundColor="transparent" 
+          translucent={false}
+        />
+        <Stack 
+          screenOptions={{ 
+            headerShown: false,
+            animation: 'slide_from_right', 
+          }}
+        />
+      </ToasterProvider>
+    </UserProvider>
   );
 }
