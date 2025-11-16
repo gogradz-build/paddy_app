@@ -1,5 +1,4 @@
 import { useRouter } from 'expo-router';
-import React from 'react';
 import { Image, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 
@@ -24,6 +23,7 @@ const index = () => {
         Empowering Sri Lanka's Farmers with Technology
       </Text>
       <View style={styles.bttnContainer}>
+        {/* <TouchableOpacity style={styles.farmerBttn} onPress={()=>handleLogin()}> */}
         <TouchableOpacity style={styles.farmerBttn} onPress={()=>handleLogin()}>
           <Text style={styles.bttnText}>Login as Farmer</Text>
         </TouchableOpacity>

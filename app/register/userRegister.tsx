@@ -1,14 +1,15 @@
 import { ArrowIcon } from '@/assets/icons/ArrowIcon';
+import NetInfo from '@react-native-community/netinfo';
 import { Picker } from '@react-native-picker/picker';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import React, { useState } from 'react';
-import { Alert, Keyboard, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { useEffect, useState } from 'react';
+import { ActivityIndicator, Alert, Keyboard, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { auth, firestore } from '../../firebase/firebaseConfig';
 
+import { useUser } from '@/contexts/UserContext';
 import { createUserWithEmailAndPassword, updateProfile } from 'firebase/auth';
 import { doc, serverTimestamp, setDoc } from 'firebase/firestore';
-
 
 const districts = [
   "Ampara","Anuradhapura","Badulla","Batticaloa","Colombo","Galle","Gampaha","Hambantota",
@@ -19,7 +20,8 @@ const districts = [
 const UserRegister = () => {
   const { user } = useLocalSearchParams();
   const router = useRouter();
-  // const userRef = firebase.firestore().collection('users')
+  
+  const { saveUserToDB } = useUser();
 
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
@@ -27,26 +29,57 @@ const UserRegister = () => {
   const [city, setCity] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
-  const [error,setError] = useState('');
-  const [errorView,setErrorView] = useState(false)
+  const [error, setError] = useState('');
+  const [errorView, setErrorView] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
+  const [isConnected, setIsConnected] = useState(true);
   
+  // Handle userType correctly
+  const userType = Array.isArray(user) ? user[0] : user || 'farmer';
+  const isBuyer = userType === 'buyer';
+  const isFarmer = userType === 'farmer';
+
+  useEffect(() => {
+    const unsubscribe = NetInfo.addEventListener(state => {
+      setIsConnected(state.isConnected ?? false);
+      
+      if (!state.isConnected) {
+        setError('Internet connection required to create an account');
+        setErrorView(true);
+      } else if (state.isConnected && errorView && error.includes('Internet connection')) {
+        setError('');
+        setErrorView(false);
+      }
+    });
+
+    return () => unsubscribe();
+  }, [errorView, error]);
+
   const validateEmail = (email: string) => {
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     return emailRegex.test(email);
   };
 
-  // Password validation function
   const validatePassword = (password: string) => {
     return password.length >= 6;
   };
 
+  const checkInternetConnection = async (): Promise<boolean> => {
+    const state = await NetInfo.fetch();
+    return state.isConnected ?? false;
+  };
+
   const handleRegister = async () => {
-    // Reset previous errors
     setError('');
     setErrorView(false);
 
-    // Validation
+    const hasConnection = await checkInternetConnection();
+    if (!hasConnection) {
+      setError('Internet connection is required to create an account. Please check your connection and try again.');
+      setErrorView(true);
+      return;
+    }
+
     if (!name.trim() || !email.trim() || !district || !city.trim() || !password || !confirmPassword) {
       setError('Please fill all fields');
       setErrorView(true);
@@ -75,54 +108,86 @@ const UserRegister = () => {
 
     try {
       console.log('Starting user registration...');
+      console.log('User type:', userType);
+      
+      // Create Firebase Auth user
       const userCredential = await createUserWithEmailAndPassword(auth, email.trim().toLowerCase(), password);
       const firebaseUser = userCredential.user;
       
       console.log('User created in Firebase Auth:', firebaseUser.uid);
 
-      
+      // Update profile with display name
       await updateProfile(firebaseUser, {
         displayName: name.trim(),
       });
 
-      
-      const userData = {
+      // Prepare Firestore user data
+      const firestoreUserData = {
         uid: firebaseUser.uid,
         name: name.trim(),
         email: email.toLowerCase().trim(),
         district: district,
         city: city.trim(),
-        userType: user || 'farmer', 
+        userType: userType,
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
         isActive: true,
-        emailVerified: firebaseUser.emailVerified,
         profileComplete: true,
-       
+        emailVerified: firebaseUser.emailVerified,
       };
 
-      
-      await setDoc(doc(firestore, 'users', firebaseUser.uid), userData);
-
+      // Save to Firestore
+      await setDoc(doc(firestore, 'users', firebaseUser.uid), firestoreUserData);
       console.log('User data saved to Firestore successfully');
 
+      // Prepare local SQLite user data
+      const localUserData = {
+        uid: firebaseUser.uid,
+        name: name.trim(),
+        email: email.toLowerCase().trim(),
+        district: district,
+        city: city.trim(),
+        userType: userType,
+        password: password, 
+        createdAt: new Date().toISOString(), 
+        updatedAt: new Date().toISOString(),
+        isActive: true,
+        profileComplete: true,
+      };
       
+      // Save to SQLite for offline access
+      try {
+        await saveUserToDB(localUserData);
+        console.log('User data saved to SQLite successfully for offline access');
+      } catch (sqliteError) {
+        console.error('SQLite save error:', sqliteError);
+      }
+
+      // Clear form
       setName('');
       setEmail('');
       setCity('');
       setPassword('');
       setConfirmPassword('');
       Keyboard.dismiss();
-      setIsLoading(false)
+      setIsLoading(false);
+      
+      // Success message based on user type
+      let successMessage = 'Account created successfully!';
+      if (isBuyer) {
+        successMessage = 'Buyer account created successfully! You can now browse and purchase products from farmers.';
+      } else if (isFarmer) {
+        successMessage = 'Farmer account created successfully! You can now list your products and connect with buyers.';
+      }
+      
       Alert.alert(
         'Success!', 
-        'Account created successfully!',
+        successMessage,
         [
           {
             text: 'OK',
             onPress: () => {
               router.replace('/login' as any);
-             
             },
           },
         ]
@@ -130,7 +195,6 @@ const UserRegister = () => {
 
     } catch (error: any) {
       console.error('Registration error:', error);
-      
       
       let errorMessage = 'Registration failed. Please try again.';
       
@@ -151,7 +215,7 @@ const UserRegister = () => {
           errorMessage = 'Network error. Please check your internet connection and try again.';
           break;
         default:
-          errorMessage = error.message || 'Registration failed. Please try again.';
+          errorMessage = error.message || 'Registration failed. Please check your internet connection and try again.';
       }
       
       setError(errorMessage);
@@ -161,48 +225,60 @@ const UserRegister = () => {
     }
   };
 
-  const handleBack = ()=>{
+  const handleBack = () => {
     router.back();
-  }
+  };
+
   return (
     <SafeAreaProvider style={styles.container}>
       <View style={styles.header}>
         <TouchableOpacity onPress={() => handleBack()}>
           <ArrowIcon size={24} color="#000" />
         </TouchableOpacity>
-        <Text style={styles.headerText}>Register</Text>
+        <Text style={styles.headerText}>
+          Register {isFarmer ? '(Farmer)' : isBuyer ? '(Buyer)' : ''}
+        </Text>
       </View>
+
+      {!isConnected && (
+        <View style={styles.connectionWarning}>
+          <Text style={styles.connectionWarningText}>
+            No internet connection. Registration requires an active internet connection.
+          </Text>
+        </View>
+      )}
 
       <ScrollView
         contentContainerStyle={styles.bodyContainer}
         keyboardShouldPersistTaps="handled"
       >
-         <Text style={styles.label}>Name</Text>
-         <TextInput
+        <Text style={styles.label}>Name</Text>
+        <TextInput
           placeholder="Name"
-          style={styles.textInputField}
+          style={[styles.textInputField, !isConnected && styles.disabledInput]}
           value={name}
           onChangeText={setName}
-          editable={!isLoading}
+          editable={!isLoading && isConnected}
         />
 
         <Text style={styles.label}>Email</Text>
         <TextInput
           placeholder="Email"
-          style={styles.textInputField}
+          style={[styles.textInputField, !isConnected && styles.disabledInput]}
           value={email}
           onChangeText={setEmail}
           keyboardType="email-address"
-          editable={!isLoading}
+          autoCapitalize="none"
+          editable={!isLoading && isConnected}
         />
 
         <Text style={styles.label}>District</Text>
-        <View style={styles.pickerContainer}>
+        <View style={[styles.pickerContainer, !isConnected && styles.disabledInput]}>
           <Picker
             selectedValue={district}
             onValueChange={(value: any) => setDistrict(value)}
             style={styles.picker}
-            
+            enabled={!isLoading && isConnected}
           >
             {districts.map((d) => (
               <Picker.Item key={d} label={d} value={d} />
@@ -213,30 +289,30 @@ const UserRegister = () => {
         <Text style={styles.label}>City</Text>
         <TextInput
           placeholder="City"
-          style={styles.textInputField}
+          style={[styles.textInputField, !isConnected && styles.disabledInput]}
           value={city}
           onChangeText={setCity}
-          editable={!isLoading}
+          editable={!isLoading && isConnected}
         />
 
         <Text style={styles.label}>Password</Text>
         <TextInput
           placeholder="Password"
-          style={styles.textInputField}
+          style={[styles.textInputField, !isConnected && styles.disabledInput]}
           value={password}
           onChangeText={setPassword}
           secureTextEntry
-          editable={!isLoading}
+          editable={!isLoading && isConnected}
         />
 
         <Text style={styles.label}>Confirm Password</Text>
         <TextInput
           placeholder="Confirm Password"
-          style={styles.textInputField}
+          style={[styles.textInputField, !isConnected && styles.disabledInput]}
           value={confirmPassword}
           onChangeText={setConfirmPassword}
           secureTextEntry
-          editable={!isLoading}
+          editable={!isLoading && isConnected}
         />
         
         {errorView && (
@@ -244,18 +320,43 @@ const UserRegister = () => {
         )}
 
         <TouchableOpacity
-          style={styles.registerButton}
+          style={[
+            styles.registerButton, 
+            (isLoading || !isConnected) && styles.registerButtonDisabled
+          ]}
           onPress={handleRegister}
-          disabled={isLoading}
+          disabled={isLoading || !isConnected}
         >
-          {isLoading===true &&(
-            <Text style={styles.registerButtonText}>Registering</Text>
+          {isLoading ? (
+            <View style={styles.loadingContainer}>
+              <ActivityIndicator color="#fff" style={styles.loader} />
+              <Text style={styles.registerButtonText}>Registering...</Text>
+            </View>
+          ) : (
+            <Text style={styles.registerButtonText}>
+              {!isConnected ? 'No Internet Connection' : 'Register'}
+            </Text>
           )}
-          {isLoading===false &&(
-            <Text style={styles.registerButtonText}>Register</Text>
-          )}
-          
         </TouchableOpacity>
+
+        {isFarmer && (
+          <Text style={styles.helpText}>
+            🌾 As a farmer, you'll be able to list your products and connect with buyers in your area.
+          </Text>
+        )}
+
+        {isBuyer && (
+          <Text style={styles.helpText}>
+            🛒 As a buyer, you'll be able to browse and purchase fresh products directly from local farmers.
+          </Text>
+        )}
+
+        {!isConnected && (
+          <Text style={styles.helpText}>
+            Registration requires an internet connection to create your account securely. 
+            Once registered, you'll be able to login offline.
+          </Text>
+        )}
       </ScrollView>
     </SafeAreaProvider>
   );
@@ -281,6 +382,20 @@ const styles = StyleSheet.create({
     fontFamily: 'Inter-Regular',
     fontSize: 24,
   },
+  connectionWarning: {
+    backgroundColor: '#FFF3CD',
+    borderColor: '#FFEAA7',
+    borderWidth: 1,
+    borderRadius: 8,
+    padding: 12,
+    marginBottom: 16,
+  },
+  connectionWarningText: {
+    color: '#856404',
+    fontFamily: 'Inter-SemiBold',
+    fontSize: 14,
+    textAlign: 'center',
+  },
   bodyContainer: {
     paddingBottom: 40,
   },
@@ -303,6 +418,11 @@ const styles = StyleSheet.create({
     backgroundColor: '#fff',
     marginBottom: 16,
   },
+  disabledInput: {
+    backgroundColor: '#f5f5f5',
+    color: '#999',
+    opacity: 0.6,
+  },
   pickerContainer: {
     borderWidth: 1,
     borderColor: '#ccc',
@@ -321,10 +441,22 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginTop: 12,
   },
+  registerButtonDisabled: {
+    opacity: 0.6,
+    backgroundColor: '#ccc',
+  },
   registerButtonText: {
     color: '#fff',
     fontFamily: 'Inter-SemiBold',
     fontSize: 16,
+  },
+  loadingContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  loader: {
+    marginRight: 8,
   },
   errorText: {
     color: 'red',
@@ -333,6 +465,12 @@ const styles = StyleSheet.create({
     marginBottom: 16,
     textAlign: 'center',
   },
+  helpText: {
+    color: '#666',
+    fontFamily: 'Inter-Regular',
+    fontSize: 12,
+    textAlign: 'center',
+    marginTop: 16,
+    lineHeight: 18,
+  },
 });
-
-

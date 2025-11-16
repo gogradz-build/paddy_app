@@ -42,7 +42,14 @@
       ],
       "expo-secure-store",
       "expo-maps",
-      "expo-font"
+      "expo-font",
+      "expo-sqlite",
+      [
+        "expo-location",
+        {
+          "locationAlwaysAndWhenInUsePermission": "Allow $(PRODUCT_NAME) to access your location to enable product delivery."
+        }
+      ]
     ],
     "experiments": {
       "typedRoutes": true,
