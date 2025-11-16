@@ -1,7 +1,6 @@
 import { ArrowIcon } from '@/assets/icons/ArrowIcon';
 import NetInfo from '@react-native-community/netinfo';
 import { Picker } from '@react-native-picker/picker';
-import * as Location from 'expo-location';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useEffect, useState } from 'react';
 import { ActivityIndicator, Alert, Keyboard, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
@@ -10,7 +9,7 @@ import { auth, firestore } from '../../firebase/firebaseConfig';
 
 import { useUser } from '@/contexts/UserContext';
 import { createUserWithEmailAndPassword, updateProfile } from 'firebase/auth';
-import { addDoc, collection, doc, serverTimestamp, setDoc } from 'firebase/firestore';
+import { doc, serverTimestamp, setDoc } from 'firebase/firestore';
 
 const districts = [
   "Ampara","Anuradhapura","Badulla","Batticaloa","Colombo","Galle","Gampaha","Hambantota",
@@ -34,11 +33,11 @@ const UserRegister = () => {
   const [errorView, setErrorView] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [isConnected, setIsConnected] = useState(true);
-  const [isGettingLocation, setIsGettingLocation] = useState(false);
-  const [locationPermissionGranted, setLocationPermissionGranted] = useState(false);
   
+  // Handle userType correctly
   const userType = Array.isArray(user) ? user[0] : user || 'farmer';
   const isBuyer = userType === 'buyer';
+  const isFarmer = userType === 'farmer';
 
   useEffect(() => {
     const unsubscribe = NetInfo.addEventListener(state => {
@@ -47,154 +46,14 @@ const UserRegister = () => {
       if (!state.isConnected) {
         setError('Internet connection required to create an account');
         setErrorView(true);
-      } else if (!state.isConnected && errorView && error.includes('Internet connection')) {
+      } else if (state.isConnected && errorView && error.includes('Internet connection')) {
         setError('');
         setErrorView(false);
       }
     });
 
     return () => unsubscribe();
-  }, []);
-
-  useEffect(() => {
-    if (isBuyer) {
-      requestLocationPermission();
-    }
-  }, [isBuyer]);
-
-  const requestLocationPermission = async () => {
-    try {
-      const { status } = await Location.requestForegroundPermissionsAsync();
-      setLocationPermissionGranted(status === 'granted');
-      
-      if (status !== 'granted') {
-        Alert.alert(
-          'Location Permission Required',
-          'As a buyer/vendor, we need your location to help farmers find you and deliver products. Please enable location access in your device settings.',
-          [{ text: 'OK' }]
-        );
-      }
-    } catch (error) {
-      console.error('Error requesting location permission:', error);
-    }
-  };
-
-  const getCurrentLocation = async () => {
-    try {
-      setIsGettingLocation(true);
-      
-      const location = await Location.getCurrentPositionAsync({
-        accuracy: Location.Accuracy.Balanced,
-      });
-
-      return {
-        latitude: location.coords.latitude,
-        longitude: location.coords.longitude,
-        accuracy: location.coords.accuracy,
-        altitude: location.coords.altitude,
-        heading: location.coords.heading,
-        speed: location.coords.speed,
-      };
-    } catch (error) {
-      console.error('Error getting location:', error);
-      throw new Error('Failed to get current location. Please try again.');
-    } finally {
-      setIsGettingLocation(false);
-    }
-  };
-
-  const getAddressFromCoordinates = async (latitude: number, longitude: number) => {
-    try {
-      const addressResults = await Location.reverseGeocodeAsync({
-        latitude,
-        longitude,
-      });
-
-      if (addressResults && addressResults.length > 0) {
-        const address = addressResults[0];
-        return {
-          street: address.street || '',
-          streetNumber: address.streetNumber || '',
-          district: address.district || address.subregion || '',
-          city: address.city || address.region || '',
-          region: address.region || '',
-          postalCode: address.postalCode || '',
-          country: address.country || 'Sri Lanka',
-          formattedAddress: [
-            address.streetNumber,
-            address.street,
-            address.city,
-            address.region,
-            address.postalCode,
-          ].filter(Boolean).join(', '),
-        };
-      }
-      return null;
-    } catch (error) {
-      console.error('Error reverse geocoding:', error);
-      return null;
-    }
-  };
-
-  const saveLocationToFirestore = async (userId: string, locationData: any) => {
-    try {
-      const locationDoc = {
-        userId: userId,
-        userType: userType,
-        userName: name.trim(),
-        userEmail: email.toLowerCase().trim(),
-        
-        // GPS Coordinates
-        coordinates: {
-          latitude: locationData.latitude,
-          longitude: locationData.longitude,
-        },
-        accuracy: locationData.accuracy,
-        altitude: locationData.altitude || null,
-        heading: locationData.heading || null,
-        speed: locationData.speed || null,
-        
-        // Address Information
-        address: locationData.address || {
-          street: '',
-          streetNumber: '',
-          district: district,
-          city: city.trim(),
-          region: '',
-          postalCode: '',
-          country: 'Sri Lanka',
-          formattedAddress: `${city.trim()}, ${district}`,
-        },
-        
-        // User-provided location
-        userProvidedDistrict: district,
-        userProvidedCity: city.trim(),
-        
-        // Metadata
-        isActive: true,
-        isPrimary: true,
-        locationType: 'business', // business, home, warehouse, etc.
-        locationStatus: 'verified',
-        
-        // Timestamps
-        createdAt: serverTimestamp(),
-        updatedAt: serverTimestamp(),
-        lastVerifiedAt: serverTimestamp(),
-        
-        // Additional Info
-        notes: '',
-        deliveryInstructions: '',
-      };
-
-      const locationRef = await addDoc(collection(firestore, 'locations'), locationDoc);
-      console.log('Location saved to Firestore with ID:', locationRef.id);
-      
-      return locationRef.id;
-    } catch (error) {
-      console.error('Error saving location to Firestore:', error);
-      throw error;
-    }
-  };
+  }, [errorView, error]);
 
   const validateEmail = (email: string) => {
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -245,73 +104,24 @@ const UserRegister = () => {
       return;
     }
 
-    // Check location permission for buyers
-    if (isBuyer && !locationPermissionGranted) {
-      Alert.alert(
-        'Location Required',
-        'As a buyer/vendor, location access is required to complete registration. This helps farmers find you and deliver products.',
-        [
-          {
-            text: 'Cancel',
-            style: 'cancel',
-          },
-          {
-            text: 'Enable Location',
-            onPress: () => requestLocationPermission(),
-          },
-        ]
-      );
-      return;
-    }
-
     setIsLoading(true);
 
     try {
       console.log('Starting user registration...');
+      console.log('User type:', userType);
       
-      // Get location for buyers before creating account
-      let locationData = null;
-      let addressData = null;
-      
-      if (isBuyer) {
-        try {
-          locationData = await getCurrentLocation();
-          addressData = await getAddressFromCoordinates(
-            locationData.latitude,
-            locationData.longitude
-          );
-          console.log('Location acquired:', locationData);
-        } catch (locationError: any) {
-          Alert.alert(
-            'Location Error',
-            'We had trouble getting your location. You can continue registration, but you may need to update your location later in settings.',
-            [
-              {
-                text: 'Cancel',
-                style: 'cancel',
-                onPress: () => setIsLoading(false),
-              },
-              {
-                text: 'Continue Anyway',
-                onPress: async () => {
-                  // Continue without location
-                },
-              },
-            ]
-          );
-          return;
-        }
-      }
-      
+      // Create Firebase Auth user
       const userCredential = await createUserWithEmailAndPassword(auth, email.trim().toLowerCase(), password);
       const firebaseUser = userCredential.user;
       
       console.log('User created in Firebase Auth:', firebaseUser.uid);
 
+      // Update profile with display name
       await updateProfile(firebaseUser, {
         displayName: name.trim(),
       });
 
+      // Prepare Firestore user data
       const firestoreUserData = {
         uid: firebaseUser.uid,
         name: name.trim(),
@@ -324,26 +134,13 @@ const UserRegister = () => {
         isActive: true,
         profileComplete: true,
         emailVerified: firebaseUser.emailVerified,
-        hasLocation: isBuyer && locationData !== null,
       };
 
+      // Save to Firestore
       await setDoc(doc(firestore, 'users', firebaseUser.uid), firestoreUserData);
       console.log('User data saved to Firestore successfully');
 
-      // Save location for buyers
-      if (isBuyer && locationData) {
-        try {
-          await saveLocationToFirestore(firebaseUser.uid, {
-            ...locationData,
-            address: addressData,
-          });
-          console.log('Buyer location saved successfully');
-        } catch (locationSaveError) {
-          console.error('Failed to save location:', locationSaveError);
-          // Don't fail registration if location save fails
-        }
-      }
-
+      // Prepare local SQLite user data
       const localUserData = {
         uid: firebaseUser.uid,
         name: name.trim(),
@@ -358,6 +155,7 @@ const UserRegister = () => {
         profileComplete: true,
       };
       
+      // Save to SQLite for offline access
       try {
         await saveUserToDB(localUserData);
         console.log('User data saved to SQLite successfully for offline access');
@@ -374,9 +172,13 @@ const UserRegister = () => {
       Keyboard.dismiss();
       setIsLoading(false);
       
-      const successMessage = isBuyer 
-        ? 'Account created successfully! Your location has been saved to help farmers deliver products to you.'
-        : 'Account created successfully! Your account has been saved both online and locally for offline access.';
+      // Success message based on user type
+      let successMessage = 'Account created successfully!';
+      if (isBuyer) {
+        successMessage = 'Buyer account created successfully! You can now browse and purchase products from farmers.';
+      } else if (isFarmer) {
+        successMessage = 'Farmer account created successfully! You can now list your products and connect with buyers.';
+      }
       
       Alert.alert(
         'Success!', 
@@ -433,21 +235,15 @@ const UserRegister = () => {
         <TouchableOpacity onPress={() => handleBack()}>
           <ArrowIcon size={24} color="#000" />
         </TouchableOpacity>
-        <Text style={styles.headerText}>Register {isBuyer ? '(Buyer)' : ''}</Text>
+        <Text style={styles.headerText}>
+          Register {isFarmer ? '(Farmer)' : isBuyer ? '(Buyer)' : ''}
+        </Text>
       </View>
 
       {!isConnected && (
         <View style={styles.connectionWarning}>
           <Text style={styles.connectionWarningText}>
             No internet connection. Registration requires an active internet connection.
-          </Text>
-        </View>
-      )}
-
-      {isBuyer && !locationPermissionGranted && (
-        <View style={styles.locationWarning}>
-          <Text style={styles.locationWarningText}>
-             Location access is required for buyer registration to enable product delivery.
           </Text>
         </View>
       )}
@@ -472,6 +268,7 @@ const UserRegister = () => {
           value={email}
           onChangeText={setEmail}
           keyboardType="email-address"
+          autoCapitalize="none"
           editable={!isLoading && isConnected}
         />
 
@@ -525,17 +322,15 @@ const UserRegister = () => {
         <TouchableOpacity
           style={[
             styles.registerButton, 
-            (isLoading || !isConnected || isGettingLocation) && styles.registerButtonDisabled
+            (isLoading || !isConnected) && styles.registerButtonDisabled
           ]}
           onPress={handleRegister}
-          disabled={isLoading || !isConnected || isGettingLocation}
+          disabled={isLoading || !isConnected}
         >
-          {isLoading || isGettingLocation ? (
+          {isLoading ? (
             <View style={styles.loadingContainer}>
               <ActivityIndicator color="#fff" style={styles.loader} />
-              <Text style={styles.registerButtonText}>
-                {isGettingLocation ? 'Getting Location...' : 'Registering...'}
-              </Text>
+              <Text style={styles.registerButtonText}>Registering...</Text>
             </View>
           ) : (
             <Text style={styles.registerButtonText}>
@@ -544,10 +339,15 @@ const UserRegister = () => {
           )}
         </TouchableOpacity>
 
+        {isFarmer && (
+          <Text style={styles.helpText}>
+            🌾 As a farmer, you'll be able to list your products and connect with buyers in your area.
+          </Text>
+        )}
+
         {isBuyer && (
           <Text style={styles.helpText}>
-             Your location will be used to help farmers deliver products to you. 
-            Your exact coordinates are kept secure and only approximate location is shared.
+            🛒 As a buyer, you'll be able to browse and purchase fresh products directly from local farmers.
           </Text>
         )}
 
@@ -592,20 +392,6 @@ const styles = StyleSheet.create({
   },
   connectionWarningText: {
     color: '#856404',
-    fontFamily: 'Inter-SemiBold',
-    fontSize: 14,
-    textAlign: 'center',
-  },
-  locationWarning: {
-    backgroundColor: '#E8F5E9',
-    borderColor: '#A5D6A7',
-    borderWidth: 1,
-    borderRadius: 8,
-    padding: 12,
-    marginBottom: 16,
-  },
-  locationWarningText: {
-    color: '#2E7D32',
     fontFamily: 'Inter-SemiBold',
     fontSize: 14,
     textAlign: 'center',

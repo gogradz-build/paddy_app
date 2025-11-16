@@ -1,6 +1,8 @@
 {
   "extends": "@expo/tsconfig.base",
   "compilerOptions": {
+     "moduleResolution": "node",
+   
     "strict": true,
     "jsx": "react-jsx",
     "allowSyntheticDefaultImports": true,

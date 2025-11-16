@@ -2,9 +2,9 @@ import { db } from '@/firebase/firebaseConfig';
 import { FontAwesome5, Ionicons } from '@expo/vector-icons';
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { getAuth } from 'firebase/auth';
-import { collection, getDocs, onSnapshot, query, where } from 'firebase/firestore';
+import { collection, getDocs, limit, onSnapshot, orderBy, query, where } from 'firebase/firestore';
 import { useEffect, useState } from "react";
-import { Alert, Image, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Alert, Image, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 type UserData = {
@@ -41,13 +41,18 @@ type Transaction = {
   id: string;
   farmerUid: string;
   vendorUid: string;
-  paddyId: string;
   paddyName: string;
-  measuredQty: number;
+  buyNumofBags: number;
   price: number;
-  pricePerKg?: number;
-  note?: string;
+  pricePerKg: number;
   createdAt?: any;
+  [key: string]: any;
+};
+
+type User = {
+  id: string;
+  name: string;
+  [key: string]: any;
 };
 
 const dashboard = () => {
@@ -60,17 +65,17 @@ const dashboard = () => {
   const [paddyPriceItems, setPaddyPriceItems] = useState<Paddy[]>([]);
   const [totalHarvest, setTotalHarvest] = useState<number>(0);
   const [totalPrice, setTotalPrice] = useState<number>(0);
-  
-  
   const [harvestsReady, setHarvestsReady] = useState<number>(0);
-  const [recentTransactions, setRecentTransactions] = useState<Transaction[]>([]);
+  const [latestTransaction, setLatestTransaction] = useState<Transaction | null>(null);
+  const [farmerName, setFarmerName] = useState<string>('');
+  const [isLoadingTransaction, setIsLoadingTransaction] = useState(true);
 
   useEffect(() => {
     loadUserName();
     fetchPaddyItems();
     fetchPaddyPriceItems(); 
     fetchHarvestsReady(); 
-    fetchRecentTransactions(); 
+    fetchLatestTransaction(); 
   }, []);
 
   useEffect(() => {
@@ -101,10 +106,7 @@ const dashboard = () => {
         return;
       }
 
-      const q = query(
-        collection(db, "farmer_paddy"),
-        // where("farmerUid", "==", user.uid)
-      );
+      const q = query(collection(db, "farmer_paddy"));
 
       const querySnapshot = await getDocs(q);
       const items: PaddyItem[] = querySnapshot.docs.map(
@@ -136,7 +138,6 @@ const dashboard = () => {
     }
   };
 
-  
   const fetchHarvestsReady = () => {
     try {
       const auth = getAuth();
@@ -148,7 +149,6 @@ const dashboard = () => {
 
       const q = query(
         collection(db, "farmer_paddy"),
-        // where("farmerUid", "==", user.uid),
         where("isSell", "==", false)
       );
 
@@ -169,44 +169,58 @@ const dashboard = () => {
     }
   };
 
-  
-  const fetchRecentTransactions = () => {
+  const fetchLatestTransaction = async () => {
     try {
+      setIsLoadingTransaction(true);
       const auth = getAuth();
       const user = auth.currentUser;
 
       if (!user?.uid) {
+        setIsLoadingTransaction(false);
         return;
       }
 
+      // Query transactions for this vendor, ordered by createdAt descending
       const q = query(
         collection(db, "transactions"),
-        where("vendorUid", "==", user.uid)
+        where("vendorUid", "==", user.uid),
+        orderBy("createdAt", "desc"),
+        limit(1)
       );
 
-      const unsubscribe = onSnapshot(
-        q,
-        (querySnapshot) => {
-          const items: Transaction[] = querySnapshot.docs
-            .map((doc) => ({ id: doc.id, ...doc.data() } as Transaction))
-            .sort((a, b) => {
-              const aTime = a.createdAt?.seconds || 0;
-              const bTime = b.createdAt?.seconds || 0;
-              return bTime - aTime;
-            })
-            .slice(0, 3); 
+      const querySnapshot = await getDocs(q);
+      
+      if (!querySnapshot.empty) {
+        const doc = querySnapshot.docs[0];
+        const transactionData = { id: doc.id, ...doc.data() } as Transaction;
+        setLatestTransaction(transactionData);
 
-          setRecentTransactions(items);
-          console.log(`Fetched ${items.length} recent transactions`);
-        },
-        (error) => {
-          console.error("Error fetching transactions:", error);
+        // Fetch farmer name using farmerUid
+        if (transactionData.farmerUid) {
+          const usersSnapshot = await getDocs(
+            query(collection(db, "users"), where("uid", "==", transactionData.farmerUid))
+          );
+          
+          if (!usersSnapshot.empty) {
+            const userData = usersSnapshot.docs[0].data() as User;
+            setFarmerName(userData.name || 'Unknown Farmer');
+          } else {
+            setFarmerName('Unknown Farmer');
+          }
         }
-      );
 
-      return unsubscribe;
+        console.log('Latest transaction fetched:', transactionData);
+      } else {
+        setLatestTransaction(null);
+        setFarmerName('');
+        console.log('No transactions found for this vendor');
+      }
     } catch (error) {
-      console.error("Error setting up transactions listener:", error);
+      console.error("Error fetching latest transaction:", error);
+      setLatestTransaction(null);
+      setFarmerName('');
+    } finally {
+      setIsLoadingTransaction(false);
     }
   };
 
@@ -229,6 +243,20 @@ const dashboard = () => {
     }
   };
 
+  const formatDate = (timestamp: any): string => {
+    if (!timestamp) return new Date().toLocaleDateString();
+    try {
+      const date = timestamp.toDate ? timestamp.toDate() : new Date(timestamp.seconds * 1000);
+      return date.toLocaleDateString('en-US', {
+        year: 'numeric',
+        month: 'short',
+        day: 'numeric',
+      });
+    } catch (error) {
+      return new Date().toLocaleDateString();
+    }
+  };
+
   return (
     <SafeAreaView style={styles.container}>
       <ScrollView contentContainerStyle={styles.scrollContent}>
@@ -246,7 +274,7 @@ const dashboard = () => {
           <View style={styles.imgcontainer}>
             <View style={styles.imgRow}>
               <Image source={cloude} />
-              <Text style={{ color: "white" }}>28c</Text>
+              <Text style={{ color: "white" }}>28°C</Text>
             </View>
             <View style={styles.imgRow}>
               <Ionicons name={"location"} size={24} color={"#759226"} />
@@ -260,27 +288,31 @@ const dashboard = () => {
                 <Ionicons name={"leaf-sharp"} size={24} color={"#759226"} />
                 <Text style={styles.smallTitle}>Total Harvest</Text>
               </View>
-              <Text style={styles.bodyLargeTitle}>{totalHarvest} kg</Text>
+              <Text style={styles.bodyLargeTitle}>{totalHarvest.toFixed(2)} kg</Text>
             </View>
             <View style={styles.headerContainer}>
               <View style={styles.imgRow}>
                 <FontAwesome5 name={"coins"} size={24} color={"#759226"} />
                 <Text style={styles.smallTitle}>Total Value</Text>
               </View>
-              <Text style={styles.bodyLargeTitle}>LKR {totalPrice}</Text>
+              <Text style={styles.bodyLargeTitle}>LKR {totalPrice.toFixed(2)}</Text>
             </View>
           </View>
         </View>
 
         <View style={styles.contentContainer}>
-          {/* Latest Transaction Paddy Card */}
-          {recentTransactions.length > 0 ? (
+          {/* Latest Transaction Card */}
+          {isLoadingTransaction ? (
+            <View style={styles.paddycard}>
+              <ActivityIndicator size="large" color="#759226" />
+            </View>
+          ) : latestTransaction ? (
             <View style={styles.paddycard}>
               <View style={styles.leftRow}>
                 <Image source={paddy} style={{ width: 163, height: 163 }} />
                 <View style={{ display: "flex", flexDirection: "row", gap: 4 }}>
                   <Text style={styles.statNumber}>
-                    {recentTransactions[0].price.toFixed(0)}
+                    {latestTransaction.price.toFixed(0)}
                   </Text>
                   <Text style={styles.lkr}>LKR</Text>
                 </View>
@@ -288,8 +320,7 @@ const dashboard = () => {
                 <View style={{ display: "flex", flexDirection: "row", gap: 4 }}>
                   <Text style={styles.cardTitle}>Per kg:</Text>
                   <Text style={styles.cardprice}>
-                    {recentTransactions[0].pricePerKg || 
-                     (recentTransactions[0].price / recentTransactions[0].measuredQty).toFixed(0)}
+                    {latestTransaction.pricePerKg.toFixed(0)}
                   </Text>
                   <Text style={styles.cardTitle}>LKR</Text>
                 </View>
@@ -297,19 +328,16 @@ const dashboard = () => {
               <View style={styles.rightRowatPaddy}>
                 <Text style={styles.smallTitle}>Latest Transaction</Text>
                 <Text style={styles.paddyName}>
-                  {recentTransactions[0].paddyName}
+                  {latestTransaction.paddyName}
                 </Text>
                 <Text style={styles.paddyCode}>
-                  {recentTransactions[0].paddyId?.slice(0, 8) || 'N/A'}
+                  Farmer: {farmerName}
                 </Text>
                 <Text style={styles.paddyWeight}>
-                  {recentTransactions[0].measuredQty} kg
+                  {latestTransaction.buyNumofBags} bags
                 </Text>
                 <Text style={styles.paddyCode}>
-                  {recentTransactions[0].createdAt
-                    ? new Date(recentTransactions[0].createdAt.seconds * 1000)
-                        .toLocaleDateString()
-                    : new Date().toLocaleDateString()}
+                  {formatDate(latestTransaction.createdAt)}
                 </Text>
               </View>
             </View>
@@ -327,7 +355,7 @@ const dashboard = () => {
                 <Text style={styles.smallTitle}>No Data</Text>
                 <Text style={styles.paddyName}>-</Text>
                 <Text style={styles.paddyCode}>-</Text>
-                <Text style={styles.paddyWeight}>0 kg</Text>
+                <Text style={styles.paddyWeight}>0 bags</Text>
               </View>
             </View>
           )}
@@ -344,21 +372,18 @@ const dashboard = () => {
             </View>
           </View>
 
-          {/* Recent Activities */}
-          <View style={styles.card}>
-            <Text style={styles.cardTitle}>Recent Activities</Text>
-           
-            {recentTransactions.length > 0 ? (
-              recentTransactions.map((transaction) => (
-                <Text key={transaction.id} style={styles.cardContent}>
-                  • Buy {transaction.measuredQty} kg of {transaction.paddyName}
-                  {transaction.note && ` - ${transaction.note}`}
-                </Text>
-              ))
-            ) : (
-              <Text style={styles.cardContent}>No recent activities</Text>
-            )}
-          </View>
+          {/* Latest Transaction Details */}
+          {latestTransaction && (
+            <View style={styles.card}>
+              <Text style={styles.cardTitle}>Latest Transaction Details</Text>
+              <Text style={styles.cardContent}>• Paddy: {latestTransaction.paddyName}</Text>
+              <Text style={styles.cardContent}>• Farmer: {farmerName}</Text>
+              <Text style={styles.cardContent}>• Bags: {latestTransaction.buyNumofBags}</Text>
+              <Text style={styles.cardContent}>• Price: LKR {latestTransaction.price.toFixed(2)}</Text>
+              <Text style={styles.cardContent}>• Per kg: LKR {latestTransaction.pricePerKg.toFixed(2)}</Text>
+              <Text style={styles.cardContent}>• Date: {formatDate(latestTransaction.createdAt)}</Text>
+            </View>
+          )}
         </View>
       </ScrollView>
     </SafeAreaView>
@@ -473,7 +498,7 @@ const styles = StyleSheet.create({
     color: '#ADADAD',
     fontFamily: 'Inter-Regular',
     fontSize: 18,
-    textTransform: 'uppercase',
+    textTransform: 'capitalize',
   },
   paddyWeight: {
     color: '#ADADAD',
@@ -507,6 +532,7 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'flex-start',
     width: '100%',
+    minHeight: 200,
   },
   leftRow: {
     display: 'flex',

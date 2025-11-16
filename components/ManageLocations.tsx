@@ -1,14 +1,9 @@
 import { firestore } from '@/firebase/firebaseConfig';
 import { Feather, Ionicons, MaterialIcons } from '@expo/vector-icons';
-import * as Location from 'expo-location';
 import {
-  addDoc,
   collection,
-  doc,
   getDocs,
   query,
-  serverTimestamp,
-  updateDoc,
   where
 } from 'firebase/firestore';
 import React, { useEffect, useState } from 'react';
@@ -23,11 +18,12 @@ import {
   View,
 } from 'react-native';
 
-
 type LocationType = 'business' | 'home' | 'warehouse' | 'farm' | 'other';
 
 type LocationData = {
   id: string;
+  Tid?: number;
+  locationId?: string | number;
   userId: string;
   userType: string;
   userName: string;
@@ -63,56 +59,28 @@ type LocationData = {
   lastVerifiedAt?: any;
 };
 
-interface ManageLocationsProps {
-  setManageLocationsModal: (value: boolean) => void;
-  userId: string;
-  userName: string;
-  userEmail: string;
+interface ViewAllLocationsProps {
+  setViewLocationsModal: (value: boolean) => void;
+  userType: 'vendor' | 'admin';
 }
 
-type ViewMode = 'list' | 'add' | 'edit';
-
-const ManageLocations: React.FC<ManageLocationsProps> = ({
-  setManageLocationsModal,
-  userId,
-  userName,
-  userEmail,
+const ViewAllLocations: React.FC<ViewAllLocationsProps> = ({
+  setViewLocationsModal,
+  userType,
 }) => {
-  const [viewMode, setViewMode] = useState<ViewMode>('list');
   const [locations, setLocations] = useState<LocationData[]>([]);
+  const [filteredLocations, setFilteredLocations] = useState<LocationData[]>([]);
   const [loading, setLoading] = useState(true);
-  const [selectedLocation, setSelectedLocation] = useState<LocationData | null>(null);
-  const [isGettingLocation, setIsGettingLocation] = useState(false);
-
-  // Edit form states
-  const [editNotes, setEditNotes] = useState('');
-  const [editDeliveryInstructions, setEditDeliveryInstructions] = useState('');
-  const [editLocationType, setEditLocationType] = useState<LocationType>('business');
-  const [editDistrict, setEditDistrict] = useState('');
-  const [editCity, setEditCity] = useState('');
-  const [editStreet, setEditStreet] = useState('');
-
-  // Add form states
-  const [addNotes, setAddNotes] = useState('');
-  const [addDeliveryInstructions, setAddDeliveryInstructions] = useState('');
-  const [addLocationType, setAddLocationType] = useState<LocationType>('business');
-  const [addDistrict, setAddDistrict] = useState('');
-  const [addCity, setAddCity] = useState('');
-  const [addStreet, setAddStreet] = useState('');
-  const [newLocationCoords, setNewLocationCoords] = useState<any>(null);
-  const [newLocationAddress, setNewLocationAddress] = useState<any>(null);
-
-  const locationTypes: { value: LocationType; label: string; icon: string }[] = [
-    { value: 'business', label: 'Business', icon: 'storefront' },
-    { value: 'home', label: 'Home', icon: 'home' },
-    { value: 'warehouse', label: 'Warehouse', icon: 'warehouse' },
-    { value: 'farm', label: 'Farm', icon: 'nature' },
-    { value: 'other', label: 'Other', icon: 'location-on' },
-  ];
+  const [searchQuery, setSearchQuery] = useState('');
+  const [selectedFilter, setSelectedFilter] = useState<'all' | LocationType>('all');
 
   useEffect(() => {
     loadLocations();
   }, []);
+
+  useEffect(() => {
+    filterLocations();
+  }, [searchQuery, selectedFilter, locations]);
 
   const loadLocations = async () => {
     setLoading(true);
@@ -120,7 +88,6 @@ const ManageLocations: React.FC<ManageLocationsProps> = ({
       const locationsRef = collection(firestore, 'locations');
       const q = query(
         locationsRef,
-        where('userId', '==', userId),
         where('isActive', '==', true)
       );
 
@@ -134,13 +101,13 @@ const ManageLocations: React.FC<ManageLocationsProps> = ({
         } as LocationData);
       });
 
+      // Sort by creation date (newest first)
       locs.sort((a, b) => {
-        if (a.isPrimary && !b.isPrimary) return -1;
-        if (!a.isPrimary && b.isPrimary) return 1;
         return b.createdAt?.seconds - a.createdAt?.seconds;
       });
 
       setLocations(locs);
+      setFilteredLocations(locs);
     } catch (error) {
       console.error('Error loading locations:', error);
       Alert.alert('Error', 'Failed to load locations');
@@ -149,696 +116,193 @@ const ManageLocations: React.FC<ManageLocationsProps> = ({
     }
   };
 
-  const handleDelete = (location: LocationData) => {
-    if (location.isPrimary) {
-      Alert.alert(
-        'Cannot Delete',
-        'You cannot delete your primary location. Please set another location as primary first.'
-      );
-      return;
+  const filterLocations = () => {
+    let filtered = [...locations];
+
+    // Filter by type
+    if (selectedFilter !== 'all') {
+      filtered = filtered.filter(loc => loc.locationType === selectedFilter);
     }
 
-    Alert.alert(
-      'Delete Location',
-      'Are you sure you want to delete this location?',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Delete',
-          style: 'destructive',
-          onPress: async () => {
-            try {
-              await updateDoc(doc(firestore, 'locations', location.id), {
-                isActive: false,
-                updatedAt: serverTimestamp(),
-              });
-              Alert.alert('Success', 'Location deleted successfully');
-              loadLocations();
-            } catch (error) {
-              console.error('Error deleting location:', error);
-              Alert.alert('Error', 'Failed to delete location');
-            }
-          },
-        },
-      ]
-    );
-  };
-
-  const handleSetPrimary = async (location: LocationData) => {
-    try {
-      const batch = locations.map((loc) =>
-        updateDoc(doc(firestore, 'locations', loc.id), {
-          isPrimary: false,
-          updatedAt: serverTimestamp(),
-        })
-      );
-      await Promise.all(batch);
-
-      await updateDoc(doc(firestore, 'locations', location.id), {
-        isPrimary: true,
-        updatedAt: serverTimestamp(),
+    // Filter by search query
+    if (searchQuery.trim()) {
+      const query = searchQuery.toLowerCase();
+      filtered = filtered.filter(loc => {
+        const tidNumber = loc.Tid !== undefined && loc.Tid !== null ? loc.Tid.toString() : '';
+        return tidNumber.includes(query) ||
+          loc.address?.city?.toLowerCase().includes(query) ||
+          loc.address?.district?.toLowerCase().includes(query) ||
+          loc.address?.street?.toLowerCase().includes(query) ||
+          loc.address?.formattedAddress?.toLowerCase().includes(query) ||
+          loc.userProvidedCity?.toLowerCase().includes(query) ||
+          loc.userProvidedDistrict?.toLowerCase().includes(query);
       });
+    }
 
-      Alert.alert('Success', 'Primary location updated');
-      loadLocations();
-    } catch (error) {
-      console.error('Error setting primary:', error);
-      Alert.alert('Error', 'Failed to update primary location');
+    setFilteredLocations(filtered);
+  };
+
+  const locationTypes: { value: 'all' | LocationType; label: string }[] = [
+    { value: 'all', label: 'All' },
+    { value: 'business', label: 'Business' },
+    { value: 'home', label: 'Home' },
+    { value: 'warehouse', label: 'Warehouse' },
+    { value: 'farm', label: 'Farm' },
+    { value: 'other', label: 'Other' },
+  ];
+
+  const getStatusColor = (status: string) => {
+    switch (status) {
+      case 'verified':
+        return '#759226';
+      case 'manual':
+        return '#FF6B6B';
+      default:
+        return '#999';
     }
   };
 
-  const openEditView = (location: LocationData) => {
-    setSelectedLocation(location);
-    setEditNotes(location.notes || '');
-    setEditDeliveryInstructions(location.deliveryInstructions || '');
-    setEditLocationType(location.locationType);
-    setEditDistrict(location.userProvidedDistrict || location.address?.district || '');
-    setEditCity(location.userProvidedCity || location.address?.city || '');
-    setEditStreet(location.address?.street || location.address?.formattedAddress || '');
-    setViewMode('edit');
-  };
-
-  const handleEdit = async () => {
-    if (!selectedLocation) return;
-
-    if (!editCity || !editDistrict) {
-      Alert.alert('Required Fields', 'Please fill in City and District');
-      return;
-    }
-
-    try {
-      const updatedAddress = {
-        ...selectedLocation.address,
-        street: editStreet,
-        city: editCity,
-        district: editDistrict,
-        formattedAddress: editStreet 
-          ? `${editStreet}, ${editCity}, ${editDistrict}` 
-          : `${editCity}, ${editDistrict}`,
-      };
-
-      await updateDoc(doc(firestore, 'locations', selectedLocation.id), {
-        notes: editNotes,
-        deliveryInstructions: editDeliveryInstructions,
-        locationType: editLocationType,
-        userProvidedDistrict: editDistrict,
-        userProvidedCity: editCity,
-        address: updatedAddress,
-        updatedAt: serverTimestamp(),
-      });
-
-      Alert.alert('Success', 'Location updated successfully');
-      setViewMode('list');
-      loadLocations();
-    } catch (error) {
-      console.error('Error updating location:', error);
-      Alert.alert('Error', 'Failed to update location');
-    }
-  };
-
-  const getCurrentLocation = async () => {
-    try {
-      setIsGettingLocation(true);
-
-      const { status } = await Location.requestForegroundPermissionsAsync();
-      if (status !== 'granted') {
-        Alert.alert('Permission Denied', 'Location permission is required to use current location');
-        setIsGettingLocation(false);
-        return null;
-      }
-
-      const location = await Location.getCurrentPositionAsync({
-        accuracy: Location.Accuracy.Balanced,
-      });
-
-      const coords = {
-        latitude: location.coords.latitude,
-        longitude: location.coords.longitude,
-        accuracy: location.coords.accuracy,
-        altitude: location.coords.altitude,
-        heading: location.coords.heading,
-        speed: location.coords.speed,
-      };
-
-      const addressResults = await Location.reverseGeocodeAsync({
-        latitude: coords.latitude,
-        longitude: coords.longitude,
-      });
-
-      let address = null;
-      if (addressResults && addressResults.length > 0) {
-        const addr = addressResults[0];
-        address = {
-          street: addr.street || '',
-          streetNumber: addr.streetNumber || '',
-          city: addr.city || addr.region || '',
-          district: addr.district || addr.subregion || '',
-          region: addr.region || '',
-          postalCode: addr.postalCode || '',
-          country: addr.country || '',
-          formattedAddress: [
-            addr.streetNumber,
-            addr.street,
-            addr.city,
-            addr.district,
-            addr.region,
-            addr.postalCode,
-            addr.country
-          ].filter(Boolean).join(', '),
-        };
-
-        setAddStreet(address.street || '');
-        setAddCity(address.city || '');
-        setAddDistrict(address.district || '');
-      }
-
-      setNewLocationCoords(coords);
-      setNewLocationAddress(address);
-      setIsGettingLocation(false);
-
-      Alert.alert('Success', 'Current location detected! You can edit the details if needed.');
-      return { coords, address };
-    } catch (error) {
-      console.error('Error getting location:', error);
-      Alert.alert('Error', 'Failed to get current location. Please enter manually.');
-      setIsGettingLocation(false);
-      return null;
-    }
-  };
-
-  const openAddView = () => {
-    setAddNotes('');
-    setAddDeliveryInstructions('');
-    setAddLocationType('business');
-    setAddDistrict('');
-    setAddCity('');
-    setAddStreet('');
-    setNewLocationCoords(null);
-    setNewLocationAddress(null);
-    setViewMode('add');
-  };
-
-  const handleAddLocation = async () => {
-    if (!addCity || !addDistrict) {
-      Alert.alert('Required Fields', 'Please fill in City and District');
-      return;
-    }
-
-    try {
-      const coordinates = newLocationCoords || {
-        latitude: 0,
-        longitude: 0,
-      };
-
-      const address = {
-        street: addStreet || '',
-        streetNumber: '',
-        city: addCity,
-        district: addDistrict,
-        region: '',
-        postalCode: '',
-        country: '',
-        formattedAddress: addStreet 
-          ? `${addStreet}, ${addCity}, ${addDistrict}` 
-          : `${addCity}, ${addDistrict}`,
-      };
-
-      const locationDoc = {
-        userId: userId,
-        userType: 'buyer',
-        userName: userName,
-        userEmail: userEmail,
-        coordinates: {
-          latitude: coordinates.latitude,
-          longitude: coordinates.longitude,
-        },
-        accuracy: coordinates.accuracy || null,
-        altitude: coordinates.altitude || null,
-        heading: coordinates.heading || null,
-        speed: coordinates.speed || null,
-        address: address,
-        userProvidedDistrict: addDistrict,
-        userProvidedCity: addCity,
-        locationType: addLocationType,
-        isPrimary: locations.length === 0,
-        isActive: true,
-        locationStatus: newLocationCoords ? 'verified' : 'manual',
-        notes: addNotes,
-        deliveryInstructions: addDeliveryInstructions,
-        createdAt: serverTimestamp(),
-        updatedAt: serverTimestamp(),
-        lastVerifiedAt: newLocationCoords ? serverTimestamp() : null,
-      };
-
-      await addDoc(collection(firestore, 'locations'), locationDoc);
-      Alert.alert('Success', 'New location added successfully');
-      setViewMode('list');
-      loadLocations();
-    } catch (error) {
-      console.error('Error adding location:', error);
-      Alert.alert('Error', 'Failed to add location');
-    }
-  };
-
-  const goBackToList = () => {
-    setViewMode('list');
-    setSelectedLocation(null);
-  };
-
-  const renderHeader = () => {
-    if (viewMode === 'list') {
-      return (
-        <View style={styles.header}>
-          <Text style={styles.headerText}>Manage Collecting Points</Text>
-          <TouchableOpacity onPress={() => setManageLocationsModal(false)}>
-            <Ionicons name="close" size={28} color="#000" />
-          </TouchableOpacity>
-        </View>
-      );
-    }
-
-    return (
-      <View style={styles.header}>
-        <TouchableOpacity onPress={goBackToList} style={styles.backButton}>
-          <Ionicons name="arrow-back" size={24} color="#000" />
-        </TouchableOpacity>
-        <Text style={styles.headerText}>
-          {viewMode === 'add' ? 'Add New Location' : 'Edit Location'}
-        </Text>
-        <View style={{ width: 28 }} />
-      </View>
-    );
-  };
-
-  const renderListView = () => (
-    <>
-      <TouchableOpacity 
-        style={styles.addButton} 
-        onPress={openAddView}
-      >
-        <Ionicons name="add-circle-outline" size={24} color="#fff" />
-        <Text style={styles.addButtonText}>Add New Location</Text>
+  const renderHeader = () => (
+    <View style={styles.header}>
+      <Text style={styles.headerText}>All Collecting Points</Text>
+      <TouchableOpacity onPress={() => setViewLocationsModal(false)}>
+        <Ionicons name="close" size={28} color="#000" />
       </TouchableOpacity>
+    </View>
+  );
 
-      <ScrollView style={styles.locationsContainer} showsVerticalScrollIndicator={false}>
-        {locations.length === 0 ? (
-          <View style={styles.emptyContainer}>
-            <Ionicons name="location-outline" size={64} color="#ccc" />
-            <Text style={styles.emptyText}>No locations saved</Text>
-            <Text style={styles.emptySubText}>
-              Add your first delivery location to get started
-            </Text>
-          </View>
-        ) : (
-          locations.map((location) => (
-            <View key={location.id} style={styles.locationCard}>
-              {location.isPrimary && (
-                <View style={styles.primaryBadge}>
-                  <Ionicons name="star" size={12} color="#fff" />
-                  <Text style={styles.primaryBadgeText}>PRIMARY</Text>
-                </View>
-              )}
-
-              <View style={styles.locationHeader}>
-                <View style={styles.locationIconContainer}>
-                  <MaterialIcons
-                    name={'location-pin'}
-                    size={24}
-                    color="#759226"
-                  />
-                </View>
-                <View style={styles.locationInfo}>
-                  <Text style={styles.locationType}>
-                    {location.locationType.charAt(0).toUpperCase() +
-                      location.locationType.slice(1)}
-                  </Text>
-                  <Text style={styles.locationAddress}>
-                    {location.address?.formattedAddress || 'Unknown address'}
-                  </Text>
-                  {(location.userProvidedCity || location.userProvidedDistrict) && (
-                    <Text style={styles.locationSubAddress}>
-                      {[location.userProvidedCity, location.userProvidedDistrict]
-                        .filter(Boolean)
-                        .join(', ')}
-                    </Text>
-                  )}
-                </View>
-              </View>
-
-              {location.notes && (
-                <View style={styles.notesContainer}>
-                  <Feather name="info" size={14} color="#666" />
-                  <Text style={styles.notesText}>{location.notes}</Text>
-                </View>
-              )}
-
-              {location.deliveryInstructions && (
-                <View style={styles.notesContainer}>
-                  <Ionicons name="navigate" size={14} color="#666" />
-                  <Text style={styles.notesText}>{location.deliveryInstructions}</Text>
-                </View>
-              )}
-
-              <View style={styles.locationActions}>
-                {!location.isPrimary && (
-                  <TouchableOpacity
-                    style={styles.actionButton}
-                    onPress={() => handleSetPrimary(location)}
-                  >
-                    <Ionicons name="star-outline" size={18} color="#759226" />
-                    <Text style={styles.actionButtonText}>Set Primary</Text>
-                  </TouchableOpacity>
-                )}
-
-                <TouchableOpacity
-                  style={styles.actionButton}
-                  onPress={() => openEditView(location)}
-                >
-                  <Feather name="edit-2" size={18} color="#4D96FF" />
-                  <Text style={[styles.actionButtonText, { color: '#4D96FF' }]}>
-                    Edit
-                  </Text>
-                </TouchableOpacity>
-
-                <TouchableOpacity
-                  style={styles.actionButton}
-                  onPress={() => handleDelete(location)}
-                >
-                  <Feather name="trash-2" size={18} color="#E62727" />
-                  <Text style={[styles.actionButtonText, { color: '#E62727' }]}>
-                    Delete
-                  </Text>
-                </TouchableOpacity>
-              </View>
-            </View>
-          ))
+  const renderSearchAndFilters = () => (
+    <>
+      <View style={styles.searchContainer}>
+        <Ionicons name="search" size={20} color="#999" />
+        <TextInput
+          style={styles.searchInput}
+          placeholder="Search by Tid, city, district..."
+          placeholderTextColor="#999"
+          value={searchQuery}
+          onChangeText={setSearchQuery}
+        />
+        {searchQuery.length > 0 && (
+          <TouchableOpacity onPress={() => setSearchQuery('')}>
+            <Ionicons name="close-circle" size={20} color="#999" />
+          </TouchableOpacity>
         )}
-      </ScrollView>
+      </View>
+
+      
+
+      <View style={styles.resultInfo}>
+        <Text style={styles.resultInfoText}>
+          Showing {filteredLocations.length} of {locations.length} locations
+        </Text>
+      </View>
     </>
   );
 
-  const renderAddView = () => (
-    <ScrollView style={styles.formContainer} showsVerticalScrollIndicator={false}>
-      <TouchableOpacity 
-        style={styles.useLocationButton} 
-        onPress={getCurrentLocation}
-        disabled={isGettingLocation}
-      >
-        {isGettingLocation ? (
-          <>
-            <ActivityIndicator color="#4D96FF" />
-            <Text style={styles.useLocationButtonText}>Getting Location...</Text>
-          </>
-        ) : (
-          <>
-            <Ionicons name="locate" size={20} color="#4D96FF" />
-            <Text style={styles.useLocationButtonText}>Use Current Location (Optional)</Text>
-          </>
-        )}
-      </TouchableOpacity>
+  const getLocationNumber = (location: LocationData) => {
+    if (location.Tid !== undefined && location.Tid !== null) {
+      return location.Tid;
+    }
+    return 'N/A';
+  };
 
-      {newLocationAddress && (
-        <View style={styles.detectedLocation}>
-          <Ionicons name="location" size={20} color="#759226" />
-          <View style={styles.detectedLocationInfo}>
-            <Text style={styles.detectedLocationLabel}>Detected Location</Text>
-            <Text style={styles.detectedLocationText}>
-              {newLocationAddress.formattedAddress}
-            </Text>
-            <Text style={styles.detectedLocationSubText}>
-              You can edit the details below if needed
+  const renderLocationCard = (location: LocationData) => (
+    <View key={location.id} style={styles.locationCard}>
+      <View style={styles.locationNumberBadge}>
+        <Text style={styles.locationNumberText}>
+          {location.Tid !== undefined && location.Tid !== null ? `#${location.Tid}` : 'N/A'}
+        </Text>
+      </View>
+
+      <View style={styles.statusBadgeContainer}>
+        <View style={[styles.statusBadge, { backgroundColor: getStatusColor(location.locationStatus) }]}>
+          <Text style={styles.statusBadgeText}>
+            {location.locationStatus === 'verified' ? 'GPS' : 'Manual'}
+          </Text>
+        </View>
+      </View>
+
+      <View style={styles.dividerLine} />
+
+      <View style={styles.locationDetails}>
+        <View style={styles.locationTypeRow}>
+          <MaterialIcons name="location-on" size={20} color="#759226" />
+          <Text style={styles.locationType}>
+            {location.locationType.charAt(0).toUpperCase() + location.locationType.slice(1)}
+          </Text>
+        </View>
+
+        {location.address?.street && (
+          <View style={styles.detailRow}>
+            <MaterialIcons name="home" size={18} color="#666" />
+            <Text style={styles.detailText}>{location.address.street}</Text>
+          </View>
+        )}
+
+        {(location.userProvidedCity || location.address?.city) && (
+          <View style={styles.detailRow}>
+            <MaterialIcons name="location-city" size={18} color="#666" />
+            <Text style={styles.detailText}>
+              {location.userProvidedCity || location.address?.city}
             </Text>
           </View>
-        </View>
+        )}
+
+        {(location.userProvidedDistrict || location.address?.district) && (
+          <View style={styles.detailRow}>
+            <MaterialIcons name="map" size={18} color="#666" />
+            <Text style={styles.detailText}>
+              {location.userProvidedDistrict || location.address?.district}
+            </Text>
+          </View>
+        )}
+
+        {location.address?.formattedAddress && (
+          <View style={styles.fullAddressContainer}>
+            <Feather name="map-pin" size={16} color="#999" />
+            <Text style={styles.fullAddressText}>
+              {location.address.formattedAddress}
+            </Text>
+          </View>
+        )}
+      </View>
+
+      {(location.notes || location.deliveryInstructions) && (
+        <>
+          <View style={styles.dividerLine} />
+          <View style={styles.additionalInfo}>
+            {location.notes && (
+              <View style={styles.infoBlock}>
+                <View style={styles.infoHeader}>
+                  <Feather name="info" size={14} color="#666" />
+                  <Text style={styles.infoLabel}>Notes</Text>
+                </View>
+                <Text style={styles.infoText}>{location.notes}</Text>
+              </View>
+            )}
+
+            {location.deliveryInstructions && (
+              <View style={styles.infoBlock}>
+                <View style={styles.infoHeader}>
+                  <Ionicons name="navigate" size={14} color="#666" />
+                  <Text style={styles.infoLabel}>Delivery Instructions</Text>
+                </View>
+                <Text style={styles.infoText}>{location.deliveryInstructions}</Text>
+              </View>
+            )}
+          </View>
+        </>
       )}
 
-      <Text style={styles.sectionTitle}>Choose Location Type</Text>
-      <View style={styles.typeSelector}>
-        {locationTypes.map((type) => (
-          <TouchableOpacity
-            key={type.value}
-            style={[
-              styles.typeOption,
-              addLocationType === type.value && styles.typeOptionActive,
-            ]}
-            onPress={() => setAddLocationType(type.value)}
-          >
-            <MaterialIcons
-              name={'location-city'}
-              size={22}
-              color={addLocationType === type.value ? '#fff' : '#759226'}
-            />
-            <Text
-              style={[
-                styles.typeOptionText,
-                addLocationType === type.value && styles.typeOptionTextActive,
-              ]}
-            >
-              {type.label}
-            </Text>
-          </TouchableOpacity>
-        ))}
-      </View>
-
-      <View style={styles.divider} />
-
-      <Text style={styles.sectionTitle}>Location Details</Text>
-
-      <View style={styles.inputGroup}>
-        <View style={styles.inputIconContainer}>
-          <MaterialIcons name="home" size={20} color="#759226" />
+      {location.coordinates && (location.coordinates.latitude !== 0 || location.coordinates.longitude !== 0) && (
+        <View style={styles.coordinatesContainer}>
+          <Ionicons name="navigate-circle" size={14} color="#999" />
+          <Text style={styles.coordinatesText}>
+            {location.coordinates.latitude.toFixed(6)}, {location.coordinates.longitude.toFixed(6)}
+          </Text>
         </View>
-        <View style={styles.inputWrapper}>
-          <Text style={styles.inputLabel}>Street Address (Optional)</Text>
-          <TextInput
-            style={styles.inputField}
-            value={addStreet}
-            onChangeText={setAddStreet}
-            placeholder="e.g., 123 Main Street, Building A"
-            placeholderTextColor="#999"
-          />
-        </View>
-      </View>
-      
-      <View style={styles.inputGroup}>
-        <View style={styles.inputIconContainer}>
-          <MaterialIcons name="location-city" size={20} color="#759226" />
-        </View>
-        <View style={styles.inputWrapper}>
-          <Text style={styles.inputLabel}>City *</Text>
-          <TextInput
-            style={styles.inputField}
-            value={addCity}
-            onChangeText={setAddCity}
-            placeholder="Enter your city"
-            placeholderTextColor="#999"
-          />
-        </View>
-      </View>
-
-      <View style={styles.inputGroup}>
-        <View style={styles.inputIconContainer}>
-          <MaterialIcons name="map" size={20} color="#759226" />
-        </View>
-        <View style={styles.inputWrapper}>
-          <Text style={styles.inputLabel}>District *</Text>
-          <TextInput
-            style={styles.inputField}
-            value={addDistrict}
-            onChangeText={setAddDistrict}
-            placeholder="Enter your district"
-            placeholderTextColor="#999"
-          />
-        </View>
-      </View>
-
-      <View style={styles.divider} />
-
-      <Text style={styles.sectionTitle}>Additional Information</Text>
-
-      <View style={styles.inputGroup}>
-        <View style={styles.inputIconContainer}>
-          <Feather name="file-text" size={20} color="#759226" />
-        </View>
-        <View style={styles.inputWrapper}>
-          <Text style={styles.inputLabel}>Notes (Optional)</Text>
-          <TextInput
-            style={[styles.inputField, styles.textArea]}
-            value={addNotes}
-            onChangeText={setAddNotes}
-            placeholder="e.g., Near the main road, next to the park"
-            placeholderTextColor="#999"
-            multiline
-            numberOfLines={3}
-          />
-        </View>
-      </View>
-
-      <View style={styles.inputGroup}>
-        <View style={styles.inputIconContainer}>
-          <Ionicons name="navigate" size={20} color="#759226" />
-        </View>
-        <View style={styles.inputWrapper}>
-          <Text style={styles.inputLabel}>Delivery Instructions (Optional)</Text>
-          <TextInput
-            style={[styles.inputField, styles.textArea]}
-            value={addDeliveryInstructions}
-            onChangeText={setAddDeliveryInstructions}
-            placeholder="e.g., Ring the doorbell twice, Leave at the gate"
-            placeholderTextColor="#999"
-            multiline
-            numberOfLines={3}
-          />
-        </View>
-      </View>
-
-      <TouchableOpacity 
-        style={[
-          styles.saveButton,
-          (!addCity || !addDistrict) && styles.saveButtonDisabled
-        ]} 
-        onPress={handleAddLocation}
-        disabled={!addCity || !addDistrict}
-      >
-        <Ionicons name="checkmark-circle" size={20} color="#fff" />
-        <Text style={styles.saveButtonText}>Add Location</Text>
-      </TouchableOpacity>
-
-      {(!addCity || !addDistrict) && (
-        <Text style={styles.requiredNote}>
-          * City and District are required fields
-        </Text>
       )}
-    </ScrollView>
-  );
-
-  const renderEditView = () => (
-    <ScrollView style={styles.formContainer} showsVerticalScrollIndicator={false}>
-      <Text style={styles.sectionTitle}>Location Type</Text>
-      <View style={styles.typeSelector}>
-        {locationTypes.map((type) => (
-          <TouchableOpacity
-            key={type.value}
-            style={[
-              styles.typeOption,
-              editLocationType === type.value && styles.typeOptionActive,
-            ]}
-            onPress={() => setEditLocationType(type.value)}
-          >
-            <MaterialIcons
-              name={'local-activity'}
-              size={22}
-              color={editLocationType === type.value ? '#fff' : '#759226'}
-            />
-            <Text
-              style={[
-                styles.typeOptionText,
-                editLocationType === type.value && styles.typeOptionTextActive,
-              ]}
-            >
-              {type.label}
-            </Text>
-          </TouchableOpacity>
-        ))}
-      </View>
-
-      <View style={styles.divider} />
-
-      <Text style={styles.sectionTitle}>Location Details</Text>
-
-      <View style={styles.inputGroup}>
-        <View style={styles.inputIconContainer}>
-          <MaterialIcons name="home" size={20} color="#759226" />
-        </View>
-        <View style={styles.inputWrapper}>
-          <Text style={styles.inputLabel}>Street Address</Text>
-          <TextInput
-            style={styles.inputField}
-            value={editStreet}
-            onChangeText={setEditStreet}
-            placeholder="Enter street address"
-            placeholderTextColor="#999"
-          />
-        </View>
-      </View>
-
-      <View style={styles.inputGroup}>
-        <View style={styles.inputIconContainer}>
-          <MaterialIcons name="location-city" size={20} color="#759226" />
-        </View>
-        <View style={styles.inputWrapper}>
-          <Text style={styles.inputLabel}>City *</Text>
-          <TextInput
-            style={styles.inputField}
-            value={editCity}
-            onChangeText={setEditCity}
-            placeholder="Enter city"
-            placeholderTextColor="#999"
-          />
-        </View>
-      </View>
-
-      <View style={styles.inputGroup}>
-        <View style={styles.inputIconContainer}>
-          <MaterialIcons name="map" size={20} color="#759226" />
-        </View>
-        <View style={styles.inputWrapper}>
-          <Text style={styles.inputLabel}>District *</Text>
-          <TextInput
-            style={styles.inputField}
-            value={editDistrict}
-            onChangeText={setEditDistrict}
-            placeholder="Enter district"
-            placeholderTextColor="#999"
-          />
-        </View>
-      </View>
-
-      <View style={styles.divider} />
-
-      <Text style={styles.sectionTitle}>Additional Information</Text>
-
-      <View style={styles.inputGroup}>
-        <View style={styles.inputIconContainer}>
-          <Feather name="file-text" size={20} color="#759226" />
-        </View>
-        <View style={styles.inputWrapper}>
-          <Text style={styles.inputLabel}>Notes</Text>
-          <TextInput
-            style={[styles.inputField, styles.textArea]}
-            value={editNotes}
-            onChangeText={setEditNotes}
-            placeholder="Add any notes about this location"
-            placeholderTextColor="#999"
-            multiline
-            numberOfLines={3}
-          />
-        </View>
-      </View>
-
-      <View style={styles.inputGroup}>
-        <View style={styles.inputIconContainer}>
-          <Ionicons name="navigate" size={20} color="#759226" />
-        </View>
-        <View style={styles.inputWrapper}>
-          <Text style={styles.inputLabel}>Delivery Instructions</Text>
-          <TextInput
-            style={[styles.inputField, styles.textArea]}
-            value={editDeliveryInstructions}
-            onChangeText={setEditDeliveryInstructions}
-            placeholder="Add delivery instructions"
-            placeholderTextColor="#999"
-            multiline
-            numberOfLines={3}
-          />
-        </View>
-      </View>
-
-      <TouchableOpacity style={styles.saveButton} onPress={handleEdit}>
-        <Ionicons name="checkmark-circle" size={20} color="#fff" />
-        <Text style={styles.saveButtonText}>Save Changes</Text>
-      </TouchableOpacity>
-    </ScrollView>
+    </View>
   );
 
   return (
@@ -852,16 +316,37 @@ const ManageLocations: React.FC<ManageLocationsProps> = ({
         </View>
       ) : (
         <>
-          {viewMode === 'list' && renderListView()}
-          {viewMode === 'add' && renderAddView()}
-          {viewMode === 'edit' && renderEditView()}
+          {renderSearchAndFilters()}
+          <ScrollView 
+            style={styles.locationsContainer} 
+            showsVerticalScrollIndicator={false}
+            contentContainerStyle={styles.locationsContent}
+          >
+            {filteredLocations.length === 0 ? (
+              <View style={styles.emptyContainer}>
+                <Ionicons name="location-outline" size={64} color="#ccc" />
+                <Text style={styles.emptyText}>
+                  {searchQuery || selectedFilter !== 'all' 
+                    ? 'No locations found' 
+                    : 'No locations available'}
+                </Text>
+                <Text style={styles.emptySubText}>
+                  {searchQuery || selectedFilter !== 'all'
+                    ? 'Try adjusting your search or filters'
+                    : 'Locations will appear here once users add them'}
+                </Text>
+              </View>
+            ) : (
+              filteredLocations.map(renderLocationCard)
+            )}
+          </ScrollView>
         </>
       )}
     </View>
   );
 };
 
-export default ManageLocations;
+export default ViewAllLocations;
 
 const styles = StyleSheet.create({
   container: {
@@ -878,9 +363,6 @@ const styles = StyleSheet.create({
     fontFamily: 'Inter-SemiBold',
     color: '#000',
   },
-  backButton: {
-    padding: 4,
-  },
   loadingContainer: {
     flex: 1,
     justifyContent: 'center',
@@ -892,26 +374,63 @@ const styles = StyleSheet.create({
     color: '#666',
     fontFamily: 'Inter-Regular',
   },
-  addButton: {
-    backgroundColor: '#759226',
+  searchContainer: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center',
-    padding: 16,
+    backgroundColor: '#F8F8F8',
     borderRadius: 12,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
     marginBottom: 16,
-    gap: 8,
+    gap: 10,
   },
-  addButtonText: {
-    color: '#fff',
-    fontSize: 16,
+  searchInput: {
+    flex: 1,
+    fontSize: 15,
+    fontFamily: 'Inter-Regular',
+    color: '#000',
+  },
+  filterContainer: {
+    marginBottom: 12,
+  },
+  filterContent: {
+    gap: 10,
+    paddingBottom: 4,
+  },
+  filterChip: {
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 20,
+    backgroundColor: '#F8F8F8',
+    borderWidth: 1,
+    borderColor: '#E0E0E0',
+  },
+  filterChipActive: {
+    backgroundColor: '#759226',
+    borderColor: '#759226',
+  },
+  filterChipText: {
+    fontSize: 14,
     fontFamily: 'Inter-SemiBold',
+    color: '#666',
+  },
+  filterChipTextActive: {
+    color: '#fff',
+  },
+  resultInfo: {
+    paddingVertical: 8,
+    marginBottom: 8,
+  },
+  resultInfoText: {
+    fontSize: 13,
+    fontFamily: 'Inter-Regular',
+    color: '#666',
   },
   locationsContainer: {
     flex: 1,
   },
-  formContainer: {
-    flex: 1,
+  locationsContent: {
+    paddingBottom: 20,
   },
   emptyContainer: {
     alignItems: 'center',
@@ -933,14 +452,16 @@ const styles = StyleSheet.create({
   },
   locationCard: {
     backgroundColor: '#F8F8F8',
-    borderRadius: 12,
+    borderRadius: 16,
     padding: 16,
-    marginBottom: 12,
+    marginBottom: 16,
     elevation: 2,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.1,
-    shadowRadius: 3,
+    shadowRadius: 4,
+    borderWidth: 1,
+    borderColor: '#E8E8E8',
   },
   primaryBadge: {
     position: 'absolute',
@@ -953,6 +474,7 @@ const styles = StyleSheet.create({
     paddingVertical: 4,
     borderRadius: 12,
     gap: 4,
+    zIndex: 1,
   },
   primaryBadgeText: {
     color: '#fff',
@@ -960,247 +482,159 @@ const styles = StyleSheet.create({
     fontFamily: 'Inter-SemiBold',
     letterSpacing: 0.5,
   },
-  locationHeader: {
-    flexDirection: 'row',
-    marginBottom: 12,
+  locationNumberBadge: {
+    position: 'absolute',
+    top: 12,
+    left: 12,
+    backgroundColor: '#4D96FF',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 12,
+    zIndex: 1,
   },
-  locationIconContainer: {
+  locationNumberText: {
+    color: '#fff',
+    fontSize: 14,
+    fontFamily: 'Inter-Bold',
+    letterSpacing: 0.5,
+  },
+  statusBadgeContainer: {
+    alignItems: 'flex-end',
+    marginBottom: 12,
+    paddingTop: 8,
+  },
+  userInfoSection: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    marginBottom: 12,
+    paddingRight: 80,
+  },
+  userInfoHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+  },
+  userIcon: {
     width: 40,
     height: 40,
-    backgroundColor: '#E8F5E9',
+    backgroundColor: '#E3F2FD',
     borderRadius: 20,
     alignItems: 'center',
     justifyContent: 'center',
     marginRight: 12,
   },
-  locationInfo: {
+  userDetails: {
     flex: 1,
   },
-  locationType: {
+  userName: {
     fontSize: 16,
     fontFamily: 'Inter-SemiBold',
     color: '#000',
+    marginBottom: 2,
+  },
+  userEmail: {
+    fontSize: 12,
+    fontFamily: 'Inter-Regular',
+    color: '#666',
+  },
+  statusBadge: {
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 8,
+  },
+  statusBadgeText: {
+    fontSize: 10,
+    fontFamily: 'Inter-SemiBold',
+    color: '#fff',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+  dividerLine: {
+    height: 1,
+    backgroundColor: '#E0E0E0',
+    marginVertical: 12,
+  },
+  locationDetails: {
+    gap: 10,
+  },
+  locationTypeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
     marginBottom: 4,
   },
-  locationAddress: {
+  locationType: {
+    fontSize: 15,
+    fontFamily: 'Inter-SemiBold',
+    color: '#759226',
+  },
+  detailRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  detailText: {
+    flex: 1,
+    fontSize: 14,
+    fontFamily: 'Inter-Regular',
+    color: '#333',
+  },
+  fullAddressContainer: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 8,
+    backgroundColor: '#fff',
+    padding: 10,
+    borderRadius: 8,
+    marginTop: 4,
+  },
+  fullAddressText: {
+    flex: 1,
     fontSize: 13,
     fontFamily: 'Inter-Regular',
     color: '#666',
     lineHeight: 18,
   },
-  locationSubAddress: {
-    fontSize: 12,
-    fontFamily: 'Inter-Regular',
-    color: '#759226',
-    marginTop: 2,
+  additionalInfo: {
+    gap: 10,
   },
-  notesContainer: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
+  infoBlock: {
     backgroundColor: '#fff',
-    padding: 10,
+    padding: 12,
     borderRadius: 8,
-    marginBottom: 8,
-    gap: 8,
   },
-  notesText: {
-    flex: 1,
-    fontSize: 13,
-    fontFamily: 'Inter-Regular',
+  infoHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginBottom: 6,
+  },
+  infoLabel: {
+    fontSize: 12,
+    fontFamily: 'Inter-SemiBold',
     color: '#666',
-  },
-  locationActions: {
-    flexDirection: 'row',
-    justifyContent: 'flex-end',
-    gap: 12,
-    marginTop: 8,
-  },
-  actionButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-  },
-  actionButtonText: {
-    fontSize: 13,
-    fontFamily: 'Inter-SemiBold',
-    color: '#759226',
-  },
-  useLocationButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: '#E3F2FD',
-    padding: 14,
-    borderRadius: 12,
-    marginBottom: 20,
-    gap: 10,
-    borderWidth: 2,
-    borderColor: '#4D96FF',
-    borderStyle: 'dashed',
-  },
-  useLocationButtonText: {
-    fontSize: 14,
-    fontFamily: 'Inter-SemiBold',
-    color: '#4D96FF',
-  },
-  detectedLocation: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    backgroundColor: '#E8F5E9',
-    padding: 14,
-    borderRadius: 12,
-    marginBottom: 20,
-    gap: 10,
-    borderLeftWidth: 4,
-    borderLeftColor: '#759226',
-  },
-  detectedLocationInfo: {
-    flex: 1,
-  },
-  detectedLocationLabel: {
-    fontSize: 11,
-    fontFamily: 'Inter-SemiBold',
-    color: '#759226',
     textTransform: 'uppercase',
     letterSpacing: 0.5,
-    marginBottom: 4,
   },
-  detectedLocationText: {
-    flex: 1,
+  infoText: {
     fontSize: 13,
     fontFamily: 'Inter-Regular',
     color: '#333',
     lineHeight: 18,
-    marginBottom: 4,
   },
-  detectedLocationSubText: {
+  coordinatesContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginTop: 8,
+    paddingTop: 8,
+    borderTopWidth: 1,
+    borderTopColor: '#E0E0E0',
+  },
+  coordinatesText: {
     fontSize: 11,
     fontFamily: 'Inter-Regular',
-    color: '#666',
-    fontStyle: 'italic',
-  },
-  sectionTitle: {
-    fontSize: 16,
-    fontFamily: 'Inter-SemiBold',
-    color: '#000',
-    marginBottom: 12,
-    marginTop: 4,
-  },
-  divider: {
-    height: 1,
-    backgroundColor: '#E0E0E0',
-    marginVertical: 20,
-  },
-  inputGroup: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    marginBottom: 16,
-    backgroundColor: '#F8F8F8',
-    borderRadius: 12,
-    padding: 12,
-    borderWidth: 1,
-    borderColor: '#E0E0E0',
-  },
-  inputIconContainer: {
-    width: 36,
-    height: 36,
-    backgroundColor: '#E8F5E9',
-    borderRadius: 18,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginRight: 12,
-    marginTop: 4,
-  },
-  inputWrapper: {
-    flex: 1,
-  },
-  inputField: {
-    fontSize: 14,
-    fontFamily: 'Inter-Regular',
-    color: '#000',
-    paddingVertical: 4,
-  },
-  inputLabel: {
-    fontSize: 12,
-    fontFamily: 'Inter-SemiBold',
-    color: '#666',
-    marginBottom: 6,
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
-  },
-  textArea: {
-    minHeight: 80,
-    textAlignVertical: 'top',
-    paddingTop: 8,
-  },
-  typeSelector: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 10,
-    marginBottom: 8,
-  },
-  typeOption: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#fff',
-    borderWidth: 2,
-    borderColor: '#759226',
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-    borderRadius: 25,
-    gap: 8,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05,
-    shadowRadius: 4,
-    elevation: 2,
-  },
-  typeOptionActive: {
-    backgroundColor: '#759226',
-    borderColor: '#759226',
-    shadowOpacity: 0.15,
-    shadowRadius: 6,
-    elevation: 4,
-  },
-  typeOptionText: {
-    fontSize: 14,
-    fontFamily: 'Inter-SemiBold',
-    color: '#759226',
-  },
-  typeOptionTextActive: {
-    color: '#fff',
-  },
-  saveButton: {
-    backgroundColor: '#759226',
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    padding: 16,
-    borderRadius: 12,
-    marginTop: 24,
-    marginBottom: 20,
-    gap: 8,
-    shadowColor: '#759226',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
-    elevation: 6,
-  },
-  saveButtonDisabled: {
-    backgroundColor: '#ccc',
-    shadowOpacity: 0.1,
-  },
-  saveButtonText: {
-    color: '#fff',
-    fontSize: 16,
-    fontFamily: 'Inter-SemiBold',
-  },
-  requiredNote: {
-    fontSize: 12,
-    fontFamily: 'Inter-Regular',
-    color: '#E62727',
-    textAlign: 'center',
-    marginTop: -10,
-    marginBottom: 20,
+    color: '#999',
   },
 });

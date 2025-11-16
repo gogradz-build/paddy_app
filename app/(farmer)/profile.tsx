@@ -130,7 +130,7 @@ console.log('userData: ',userProfileData);
           </TouchableOpacity>
         </View>
 
-        <View style={styles.itemRow}>
+        {/* <View style={styles.itemRow}>
           <View style={styles.itemFirstSection}>
             <MaterialIcons name='location-pin' color={'#000'} size={24}/>
             <Text style={styles.itemText}>Collecting Points</Text>
@@ -138,7 +138,7 @@ console.log('userData: ',userProfileData);
           <TouchableOpacity onPress={handleCPoints}>
             <MaterialIcons name='arrow-forward-ios' color='#000' size={24}/>
           </TouchableOpacity>
-        </View>
+        </View> */}
 
         <View style={styles.itemRow}>
           <View style={styles.itemFirstSection}>

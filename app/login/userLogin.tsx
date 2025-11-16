@@ -1,5 +1,6 @@
 import { ArrowIcon } from '@/assets/icons/ArrowIcon';
 import { useUser } from '@/contexts/UserContext';
+import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import NetInfo from '@react-native-community/netinfo';
 import { useRouter } from 'expo-router';
@@ -28,6 +29,7 @@ const UserLogin: React.FC = () => {
   const [errorView, setErrorView] = useState<boolean>(false);
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [loginMode, setLoginMode] = useState<'checking' | 'online' | 'offline'>('checking');
+  const [isPasswordVisible, setIsPasswordVisible] = useState<boolean>(false);
 
   const validateEmail = (email: string): boolean => {
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -282,7 +284,7 @@ const UserLogin: React.FC = () => {
         </TouchableOpacity>
         <Text style={styles.headerText}>Login</Text>
       </View>
-      
+
       <View style={styles.bodyContainer}>
         <Text style={styles.label}>Email</Text>
         <TextInput
@@ -294,38 +296,45 @@ const UserLogin: React.FC = () => {
           editable={!isLoading}
           autoCapitalize="none"
         />
-        
-        <Text style={styles.label}>Password</Text>
-        <TextInput
-          placeholder="Password"
-          style={styles.textInputField}
-          value={password}
-          onChangeText={setPassword}
-          secureTextEntry
-          editable={!isLoading}
-        />
-        
-        {errorView && (
-          <Text style={styles.errorText}>{error}</Text>
-        )}
 
-        
-        
+        <Text style={styles.label}>Password</Text>
+
+        <View style={styles.passwordContainer}>
+          <TextInput
+            placeholder="Password"
+            style={styles.passwordInput}
+            value={password}
+            onChangeText={setPassword}
+            secureTextEntry={!isPasswordVisible}
+            editable={!isLoading}
+          />
+
+          <TouchableOpacity
+            onPress={() => setIsPasswordVisible(!isPasswordVisible)}
+            style={styles.eyeIcon}
+            disabled={isLoading}
+          >
+            <Ionicons
+              name={isPasswordVisible ? "eye-off" : "eye"}
+              size={22}
+              color="#555"
+            />
+          </TouchableOpacity>
+        </View>
+
+        {errorView && <Text style={styles.errorText}>{error}</Text>}
+
         <TouchableOpacity
-          style={[
-            styles.loginButton,
-            isLoading && styles.loginButtonDisabled
-          ]}
+          style={[styles.loginButton, isLoading && styles.loginButtonDisabled]}
           onPress={handleLogin}
           disabled={isLoading}
         >
-          <Text style={styles.loginButtonText}>
-            {getLoginButtonText()}
-          </Text>
+          <Text style={styles.loginButtonText}>{getLoginButtonText()}</Text>
         </TouchableOpacity>
 
         <Text style={styles.infoText}>
-          This app works offline! Your account will be saved locally for offline access.
+          This app works offline! Your account will be saved locally for offline
+          access.
         </Text>
       </View>
     </SafeAreaProvider>
@@ -411,4 +420,25 @@ const styles = StyleSheet.create({
     marginTop: 16,
     lineHeight: 18,
   },
+  passwordContainer: {
+  flexDirection: 'row',
+  alignItems: 'center',
+  borderWidth: 1,
+  borderColor: '#ccc',
+  borderRadius: 8,
+  height: 48,
+  paddingHorizontal: 12,
+  backgroundColor: '#fff',
+  marginBottom: 16,
+},
+passwordInput: {
+  flex: 1,
+  fontSize: 16,
+  fontFamily: 'Inter-Regular',
+  color: '#333',
+},
+eyeIcon: {
+  paddingHorizontal: 6,
+},
+
 });

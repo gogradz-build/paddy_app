@@ -27,7 +27,7 @@ const index = () => {
         <TouchableOpacity style={styles.farmerBttn} onPress={()=>handleLogin()}>
           <Text style={styles.bttnText}>Login as Farmer</Text>
         </TouchableOpacity>
-        <TouchableOpacity style={styles.venderBttn} onPress={()=>router.push('/(admin)/dashboard')}>
+        <TouchableOpacity style={styles.venderBttn} onPress={()=>handleLogin()}>
           <Text style={styles.bttnText}>Login as Vendor</Text>
         </TouchableOpacity>
         <View style={styles.loginLinkContainer}>

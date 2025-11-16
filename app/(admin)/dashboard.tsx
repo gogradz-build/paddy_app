@@ -1,9 +1,10 @@
+import DownloadReportButton from '@/components/DownloadReportButton';
 import { AntDesign, EvilIcons, Feather, FontAwesome5, Foundation, Ionicons, MaterialIcons } from '@expo/vector-icons';
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useRouter } from 'expo-router';
-import { collection, getCountFromServer, getFirestore, onSnapshot, orderBy, query } from 'firebase/firestore';
+import { collection, getCountFromServer, getDocs, getFirestore, onSnapshot, orderBy, query } from 'firebase/firestore';
 import { useEffect, useState } from "react";
-import { Image, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { ActivityIndicator, Alert, Image, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 type UserData = {
@@ -18,6 +19,7 @@ type UserData = {
   createdAt: string;
   updatedAt: string;
 };
+
 type Transaction = {
   id: string;
   farmerUid: string;
@@ -29,95 +31,329 @@ type Transaction = {
   createdAt?: any;
   status?: string;
 };
+
+type FarmerPaddy = {
+  id: string;
+  qty: number;
+  price: number;
+  [key: string]: any;
+};
+
+type BagSale = {
+  id: string;
+  qtySold: number;
+  salePrice?: number;
+  [key: string]: any;
+};
+
 const dashboard = () => {
- 
   const test = require("../../assets/images/sampleUser.png");
-  const cloude = require("../../assets/images/cloude.png")
-  const [userName,setUserName] = useState('');
-  const [city,setCity] = useState('');
+  const cloude = require("../../assets/images/cloude.png");
+  const [userName, setUserName] = useState('Guest');
+  const [city, setCity] = useState('Unknown');
   const paddy = require('../../assets/images/paddy.png');
 
-  const [regUsers,setRegUsers] = useState<number>();
-  const [paddycount,setPaddyCount] = useState<number>();
+  const [regUsers, setRegUsers] = useState<number>(0);
+  const [paddycount, setPaddyCount] = useState<number>(0);
+  const [totalHarvest, setTotalHarvest] = useState<number>(0);
+  const [totalRevenue, setTotalRevenue] = useState<number>(0);
+  const [locationCount, setLocationCount] = useState<number>(0);
+  const [isLoadingStats, setIsLoadingStats] = useState(true);
+  
   const db = getFirestore();
   const router = useRouter();
   const [transactions, setTransactions] = useState<Transaction[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+
+  // Safe navigation wrapper
+  const safeNavigate = (path: string) => {
+    try {
+      router.push(path as any);
+    } catch (error) {
+      console.error(`Navigation error to ${path}:`, error);
+      Alert.alert('Navigation Error', 'Unable to navigate. Please try again.');
+    }
+  };
 
   const getUserCount = async () => {
-    const coll = collection(db, "users");
-    const snapshot = await getCountFromServer(coll);
-    console.log("Total registered users:", snapshot.data().count);
-    setRegUsers(snapshot.data().count)
-    return snapshot.data().count;
-  };
-  const getpaddyCount = async () => {
-    const coll = collection(db, "paddy");
-    const snapshot = await getCountFromServer(coll);
-    console.log("Total paddy Count is:", snapshot.data().count);
-    setPaddyCount(snapshot.data().count)
-    return snapshot.data().count;
+    try {
+      const coll = collection(db, "users");
+      const snapshot = await getCountFromServer(coll);
+      const count = snapshot.data().count || 0;
+      console.log("Total registered users:", count);
+      setRegUsers(count);
+      return count;
+    } catch (error) {
+      console.error("Error getting user count:", error);
+      setRegUsers(0);
+      return 0;
+    }
   };
 
-   useEffect(() => {
-    loadUserName();
-    getUserCount();
-    getpaddyCount();
-    fetchAdminTransactions();
+  const getpaddyCount = async () => {
+    try {
+      const coll = collection(db, "paddy");
+      const snapshot = await getCountFromServer(coll);
+      const count = snapshot.data().count || 0;
+      console.log("Total paddy Count is:", count);
+      setPaddyCount(count);
+      return count;
+    } catch (error) {
+      console.error("Error getting paddy count:", error);
+      setPaddyCount(0);
+      return 0;
+    }
+  };
+
+  const getLocationCount = async () => {
+    try {
+      const farmerLocationsColl = collection(db, "farmer_location");
+      const snapshot = await getCountFromServer(farmerLocationsColl);
+      const count = snapshot.data().count || 0;
+      console.log("Total GPS locations:", count);
+      setLocationCount(count);
+      return count;
+    } catch (error) {
+      console.error("Error getting location count:", error);
+      setLocationCount(0);
+      return 0;
+    }
+  };
+
+  const calculateTotalHarvestAndRevenue = async () => {
+    try {
+      setIsLoadingStats(true);
+
+      // Fetch all farmer_paddy data
+      const farmerPaddySnapshot = await getDocs(collection(db, 'farmer_paddy'));
+      const farmerPaddyData: FarmerPaddy[] = [];
+      
+      farmerPaddySnapshot.forEach((doc) => {
+        farmerPaddyData.push({
+          id: doc.id,
+          ...doc.data()
+        } as FarmerPaddy);
+      });
+
+      // Calculate total harvest (sum of all quantities)
+      const harvest = farmerPaddyData.reduce((sum, item) => {
+        return sum + (Number(item.qty) || 0);
+      }, 0);
+
+      // Fetch all bag_sales data
+      const bagSalesSnapshot = await getDocs(collection(db, 'bag_sales'));
+      const bagSalesData: BagSale[] = [];
+      
+      bagSalesSnapshot.forEach((doc) => {
+        bagSalesData.push({
+          id: doc.id,
+          ...doc.data()
+        } as BagSale);
+      });
+
+      // Calculate total revenue from bag sales
+      let revenue = 0;
+      
+      // Method 1: If bag_sales has salePrice field
+      revenue = bagSalesData.reduce((sum, sale) => {
+        return sum + (Number(sale.salePrice) || 0);
+      }, 0);
+
+      // Method 2: If we need to calculate from qtySold and paddy prices
+      if (revenue === 0) {
+        // Create a map of paddy prices
+        const paddyPriceMap = farmerPaddyData.reduce((map, paddy) => {
+          map[paddy.id] = Number(paddy.price) || 0;
+          return map;
+        }, {} as Record<string, number>);
+
+        // Calculate revenue from qtySold * price
+        revenue = bagSalesData.reduce((sum, sale) => {
+          const qtySold = Number(sale.qtySold) || 0;
+          const price = paddyPriceMap[sale.farmerPaddyUID || ''] || 0;
+          return sum + (qtySold * price);
+        }, 0);
+      }
+
+      console.log('Total Harvest:', harvest, 'kg');
+      console.log('Total Revenue:', revenue, 'LKR');
+
+      setTotalHarvest(harvest);
+      setTotalRevenue(revenue);
+
+    } catch (error) {
+      console.error('Error calculating harvest and revenue:', error);
+      setTotalHarvest(0);
+      setTotalRevenue(0);
+    } finally {
+      setIsLoadingStats(false);
+    }
+  };
+
+  useEffect(() => {
+    let isMounted = true;
+    let unsubscribe: (() => void) | undefined;
+
+    const initialize = async () => {
+      try {
+        if (isMounted) {
+          await loadUserName();
+          await Promise.all([
+            getUserCount(),
+            getpaddyCount(),
+            getLocationCount(),
+            calculateTotalHarvestAndRevenue()
+          ]);
+          unsubscribe = fetchAdminTransactions();
+        }
+      } catch (error) {
+        console.error("Initialization error:", error);
+        Alert.alert('Error', 'Failed to load dashboard data. Please restart the app.');
+      } finally {
+        if (isMounted) {
+          setIsLoading(false);
+        }
+      }
+    };
+
+    initialize();
+
+    return () => {
+      isMounted = false;
+      if (unsubscribe) {
+        try {
+          unsubscribe();
+        } catch (error) {
+          console.error("Error unsubscribing:", error);
+        }
+      }
+    };
   }, []);
 
   const loadUserName = async () => {
     try {
       const userDataString = await AsyncStorage.getItem("userData");
       
-      if (userDataString) {
-        const userData: UserData = JSON.parse(userDataString);
-        setUserName(userData.name);
-        setCity(userData.city)
+      if (!userDataString) {
+        console.warn("No user data found in storage");
+        setUserName('Guest');
+        setCity('Unknown');
+        return;
       }
+
+      const userData: UserData = JSON.parse(userDataString);
+      
+      if (!userData || typeof userData !== 'object') {
+        throw new Error("Invalid user data format");
+      }
+
+      setUserName(userData.name || 'Guest');
+      setCity(userData.city || 'Unknown');
     } catch (error) {
       console.error("Error loading username:", error);
-      setUserName(''); 
-    } 
-  };
-    const fetchAdminTransactions = () => {
-    const q = query(collection(db, 'transactions'), orderBy('createdAt', 'desc'));
-
-    const unsubscribe = onSnapshot(
-      q,
-      (querySnapshot) => {
-        const items: Transaction[] = querySnapshot.docs.map(
-          (doc) => ({ id: doc.id, ...doc.data() } as Transaction)
-        );
-        setTransactions(items);
-       
-      },
-      (error) => {
-        console.error('Error fetching admin transactions:', error);
-        
-      }
-    );
-
-    return unsubscribe;
-  };
-  const setLogout = async () => {
-    try {
-      await AsyncStorage.removeItem("userData");
-      setUserName("");
+      setUserName('Guest');
+      setCity('Unknown');
       
-      router.push("/");
-    } catch (error) {
-      console.error("Error clearing data:", error);
+      if (error instanceof SyntaxError) {
+        try {
+          await AsyncStorage.removeItem("userData");
+        } catch (clearError) {
+          console.error("Error clearing corrupted data:", clearError);
+        }
+      }
     }
   };
+
+  const fetchAdminTransactions = () => {
+    try {
+      const q = query(collection(db, 'transactions'), orderBy('createdAt', 'desc'));
+
+      const unsubscribe = onSnapshot(
+        q,
+        (querySnapshot) => {
+          try {
+            const items: Transaction[] = querySnapshot.docs.map((doc) => {
+              const data = doc.data();
+              return {
+                id: doc.id,
+                farmerUid: data.farmerUid || '',
+                vendorUid: data.vendorUid || '',
+                paddyId: data.paddyId || '',
+                paddyName: data.paddyName || 'Unknown',
+                measuredQty: Number(data.measuredQty) || 0,
+                price: Number(data.price) || 0,
+                createdAt: data.createdAt,
+                status: data.status || 'pending'
+              } as Transaction;
+            });
+            setTransactions(items);
+          } catch (error) {
+            console.error('Error processing transactions:', error);
+            setTransactions([]);
+          }
+        },
+        (error) => {
+          console.error('Error fetching admin transactions:', error);
+          setTransactions([]);
+          Alert.alert('Error', 'Failed to load transactions. Please check your connection.');
+        }
+      );
+
+      return unsubscribe;
+    } catch (error) {
+      console.error('Error setting up transaction listener:', error);
+      return undefined;
+    }
+  };
+
+  const setLogout = async () => {
+    try {
+      Alert.alert(
+        'Confirm Logout',
+        'Are you sure you want to logout?',
+        [
+          {
+            text: 'Cancel',
+            style: 'cancel'
+          },
+          {
+            text: 'Logout',
+            style: 'destructive',
+            onPress: async () => {
+              try {
+                await AsyncStorage.removeItem("userData");
+                setUserName("Guest");
+                setCity("Unknown");
+                safeNavigate("/");
+              } catch (error) {
+                console.error("Error during logout:", error);
+                Alert.alert('Error', 'Failed to logout. Please try again.');
+              }
+            }
+          }
+        ]
+      );
+    } catch (error) {
+      console.error("Error showing logout alert:", error);
+    }
+  };
+
+  const formatNumber = (num: number): string => {
+    return num.toLocaleString('en-US', { 
+      minimumFractionDigits: 0,
+      maximumFractionDigits: 2 
+    });
+  };
+
   return (
     <SafeAreaView style={styles.container}>
       <ScrollView contentContainerStyle={styles.scrollContent}>
         <View style={styles.header}>
           <Image source={test} style={styles.coverImg} />
           <View style={styles.headerContainer}>
-            <Text style={styles.hederTitle}>Welcome , {userName}!</Text>
+            <Text style={styles.hederTitle}>Welcome, {userName}!</Text>
             <Text style={styles.hederText}>
-               Here’s your paddy farm status at a glance
+              Here's your paddy farm status at a glance
             </Text>
           </View>
         </View>
@@ -126,7 +362,7 @@ const dashboard = () => {
           <View style={styles.imgcontainer}>
             <View style={styles.imgRow}>
               <Image source={cloude} />
-              <Text style={{ color: "white" }}>28c</Text>
+              <Text style={{ color: "white" }}>28°C</Text>
             </View>
             <View style={styles.imgRow}>
               <Ionicons name={"location"} size={24} color={"#759226"} />
@@ -140,17 +376,26 @@ const dashboard = () => {
                 <Ionicons name={"leaf-sharp"} size={24} color={"#759226"} />
                 <Text style={styles.smallTitle}>Total Harvest</Text>
               </View>
-              <Text style={styles.bodyLargeTitle}>2450 kg</Text>
+              {isLoadingStats ? (
+                <ActivityIndicator color="#759226" size="small" />
+              ) : (
+                <Text style={styles.bodyLargeTitle}>{formatNumber(totalHarvest)} kg</Text>
+              )}
             </View>
             <View style={styles.headerContainer}>
               <View style={styles.imgRow}>
                 <FontAwesome5 name={"coins"} size={24} color={"#759226"} />
-                <Text style={styles.smallTitle}>Total Harvest</Text>
+                <Text style={styles.smallTitle}>Total Revenue</Text>
               </View>
-              <Text style={styles.bodyLargeTitle}>LKR 90,000</Text>
+              {isLoadingStats ? (
+                <ActivityIndicator color="#759226" size="small" />
+              ) : (
+                <Text style={styles.bodyLargeTitle}>LKR {formatNumber(totalRevenue)}</Text>
+              )}
             </View>
           </View>
         </View>
+
         <Text style={styles.bodyTitle}>Dashboard</Text>
         <View style={styles.maincard}>
           <View style={styles.secondCard}>
@@ -181,7 +426,7 @@ const dashboard = () => {
               <Text style={styles.bodysecondTitle}>GPS location</Text>
             </View>
             <View style={styles.qtycard}>
-              <Text style={styles.bodyTitle}>3</Text>
+              <Text style={styles.bodyTitle}>{locationCount}</Text>
             </View>
           </View>
 
@@ -195,52 +440,52 @@ const dashboard = () => {
             </View>
           </View>
         </View>
-      <Text style={styles.bodyTitle}>Quick Access Menu</Text>
-      <View style={styles.quckAccess}>
+
+        <Text style={styles.bodyTitle}>Quick Access Menu</Text>
+        <View style={styles.quckAccess}>
           <View style={styles.smallcard}>
             <Feather name='users' color={'#000'} size={32}/>
-            <TouchableOpacity style={styles.bttn} onPress={()=>router.push('/ui/Users')}>
+            <TouchableOpacity style={styles.bttn} onPress={() => safeNavigate('/ui/Users')}>
               <Text style={styles.bttntext}>User</Text>
             </TouchableOpacity>
           </View>
         
           <View style={styles.smallcard}>
             <Ionicons name='pricetags-outline' color={'#000'} size={32}/>
-            <TouchableOpacity style={styles.bttn} onPress={()=>router.push('/(admin)/price')}>
+            <TouchableOpacity style={styles.bttn} onPress={() => safeNavigate('/(admin)/price')}>
               <Text style={styles.bttntext}>Price Control</Text>
             </TouchableOpacity>
           </View>
+
           <View style={styles.smallcard}>
             <Foundation name='clipboard-notes' color={'#000'} size={32}/>
-            <TouchableOpacity style={styles.bttn} onPress={()=>router.push('/(admin)/history')}>
+            <TouchableOpacity style={styles.bttn} onPress={() => safeNavigate('/(admin)/history')}>
               <Text style={styles.bttntext}>Transactions</Text>
             </TouchableOpacity>
           </View>
+
           <View style={styles.smallcard}>
             <FontAwesome5 name="seedling" color={"#000"} size={32} />
-            <TouchableOpacity style={styles.bttn} onPress={()=>router.push('/(admin)/store')}>
+            <TouchableOpacity style={styles.bttn} onPress={() => safeNavigate('/(admin)/store')}>
               <Text style={styles.bttntext}>Paddy</Text>
             </TouchableOpacity>
           </View>
+
           <View style={styles.smallcard}>
             <AntDesign name='control' color={'#000'} size={32}/>
-            <TouchableOpacity style={styles.bttn} onPress={()=>router.push('/(admin)/profile')}>
+            <TouchableOpacity style={styles.bttn} onPress={() => safeNavigate('/(admin)/profile')}>
               <Text style={styles.bttntext}>Settings</Text>
             </TouchableOpacity>
           </View>
-            <View style={styles.smallcard}>
-            <AntDesign name='poweroff' color={'#f01414ff'} size={32}/>
-            <TouchableOpacity style={styles.bttn} onPress={setLogout}>
-              <Text style={styles.bttntext}>Logout</Text>
-            </TouchableOpacity>
-          </View>
-      </View>
+
+          <DownloadReportButton />
+        </View>
       </ScrollView>
     </SafeAreaView>
   );
 };
 
-export default dashboard
+export default dashboard;
 
 const styles = StyleSheet.create({
   container: {
@@ -296,7 +541,6 @@ const styles = StyleSheet.create({
     textAlign: "right",
     fontSize: 18,
   },
-
   bodySubtitle: {
     fontSize: 16,
     color: "#E8F5E8",
@@ -328,67 +572,6 @@ const styles = StyleSheet.create({
     fontFamily: "Inter-Regular",
     fontSize: 14,
   },
-  paddyName: {
-    color: "#000",
-    fontFamily: "Inter-Bold",
-    fontSize: 24,
-    textTransform: "capitalize",
-  },
-  MTitle: {
-    color: "#ADADAD",
-    fontFamily: "Inter-Regular",
-    fontSize: 16,
-  },
-  paddyCode: {
-    color: "#ADADAD",
-    fontFamily: "Inter-Regular",
-    fontSize: 18,
-    textTransform: "uppercase",
-  },
-  paddyWeight: {
-    color: "#ADADAD",
-    fontFamily: "Inter-Regular",
-    fontSize: 24,
-    textTransform: "uppercase",
-  },
-  contentContainer: {
-    padding: 8,
-  },
-  card: {
-    backgroundColor: "#FFFFFF",
-    borderRadius: 12,
-    padding: 20,
-    marginBottom: 15,
-    shadowColor: "#000",
-    shadowOffset: {
-      width: 0,
-      height: 2,
-    },
-    shadowOpacity: 0.1,
-    shadowRadius: 3.84,
-    elevation: 5,
-  },
-  paddycard: {
-    backgroundColor: "#E2E2E2",
-    borderRadius: 16,
-    padding: 20,
-    marginBottom: 15,
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "flex-start",
-    width: "100%",
-  },
-  leftRow: {
-    display: "flex",
-    flexDirection: "column",
-    alignItems: "flex-end",
-  },
-  rightRowatPaddy: {
-    flexDirection: "column",
-    alignItems: "flex-end",
-    flexShrink: 1,
-    gap: 8,
-  },
   maincard: {
     display: "flex",
     flexDirection: "row",
@@ -405,12 +588,10 @@ const styles = StyleSheet.create({
     backgroundColor: "#fff",
     borderRadius: 16,
     flexDirection: "row",
-    // iOS shadow
     shadowColor: "#000",
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.2,
     shadowRadius: 4,
-    // Android shadow
     elevation: 5,
     justifyContent: "space-between",
     paddingLeft:4
@@ -418,7 +599,6 @@ const styles = StyleSheet.create({
   bodyTitle: {
     fontFamily: "Inter-Regular",
     fontSize: 18,
-    
   },
   bodysecondTitle: {
     fontFamily: "Inter-Regular",
@@ -427,12 +607,12 @@ const styles = StyleSheet.create({
     textAlign:'center'
   },
   leftCard: {
-  flex: 1,                        
-  flexDirection: "column",
-  alignItems: "center",
-  justifyContent: "center",
-  gap: 8,
-},
+    flex: 1,                        
+    flexDirection: "column",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+  },
   qtycard: {
     width: 73,
     height: 61,

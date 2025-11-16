@@ -1,5 +1,6 @@
 import { ToasterProvider } from '@/assets/ui/toaster';
 import { UserProvider } from '@/contexts/UserContext';
+import ErrorBoundary from '@/utils/ErrorBoundary';
 import { useFonts } from 'expo-font';
 import { SplashScreen, Stack } from "expo-router";
 import { StatusBar } from 'expo-status-bar';
@@ -65,6 +66,7 @@ export default function RootLayout() {
   }
 
   return (
+    <ErrorBoundary>
      <UserProvider>
       <ToasterProvider>
         <StatusBar 
@@ -80,5 +82,6 @@ export default function RootLayout() {
         />
       </ToasterProvider>
     </UserProvider>
+    </ErrorBoundary>
   );
 }

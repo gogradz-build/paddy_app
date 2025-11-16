@@ -14,25 +14,39 @@ export default function FarmerLayout() {
 function TabsWithSafeArea() {
   const insets = useSafeAreaInsets();
   
+  // Calculate proper tab bar height with safe bottom padding
+  const tabBarHeight = Platform.OS === 'ios' ? 85 : 65;
+  const tabBarPaddingBottom = Platform.OS === 'ios' 
+    ? Math.max(insets.bottom, 20) 
+    : 10;
+  
   return (
     <Tabs
       screenOptions={{
         tabBarActiveTintColor: '#759226',
         tabBarInactiveTintColor: '#8B9DC3',
-        tabBarShowLabel:false,
+        tabBarShowLabel: false,
         tabBarStyle: {
           backgroundColor: '#FFFFFF',
           borderTopWidth: 1,
           borderTopColor: '#E5E7EB',
-          height: Platform.OS === 'ios' ? 85 + insets.bottom : 50,
-          paddingBottom: Platform.OS === 'ios' ? insets.bottom + 8 : 20,
+          height: tabBarHeight,
+          paddingBottom: tabBarPaddingBottom,
           paddingTop: 8,
+          position: 'absolute',
+          bottom: 0,
+          left: 0,
+          right: 0,
+          elevation: 8,
+          shadowColor: '#000',
+          shadowOffset: { width: 0, height: -2 },
+          shadowOpacity: 0.1,
+          shadowRadius: 3,
         },
         tabBarLabelStyle: {
           fontSize: 11,
           fontFamily: Platform.OS === 'ios' ? 'System' : 'sans-serif-medium',
           marginTop: 1,
-          marginBottom: Platform.OS === 'android' ? 2 : 0,
         },
         headerShown: false,
       }}

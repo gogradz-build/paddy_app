@@ -1,4 +1,3 @@
-
 import AddTransaction from '@/components/AddTransaction';
 import { db } from '@/firebase/firebaseConfig';
 import { Ionicons } from '@expo/vector-icons';
@@ -13,6 +12,7 @@ import {
 import { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
+  Alert,
   FlatList,
   Image,
   Modal,
@@ -33,7 +33,7 @@ type Transaction = {
   price: number;
   createdAt?: any;
   status?: string;
-  pId:number;
+  pId: number;
 };
 
 const images = {
@@ -49,19 +49,24 @@ const images = {
 };
 
 const getPaddyImage = (name: string) => {
-  if (!name) return images.other;
-  const lower = name.toLowerCase();
-  if (lower.includes('keeri') && lower.includes('samba'))
-    return images.keerisamba;
-  if (lower.includes('nadu')) return images.nadu;
-  if (lower.includes('red') || lower.includes('ratu')) return images.redsamba;
-  if (lower.includes('heenati')) return images.heenati;
-  if (lower.includes('samba')) return images.samba;
-  if (lower.includes('kakulu')) return images.kakulu;
-  if (lower.includes('suwandel')) return images.suwandel;
-  if (lower.includes('basmathi') || lower.includes('basmati'))
-    return images.basmathi;
-  return images.other;
+  try {
+    if (!name) return images.other;
+    const lower = name.toLowerCase();
+    if (lower.includes('keeri') && lower.includes('samba'))
+      return images.keerisamba;
+    if (lower.includes('nadu')) return images.nadu;
+    if (lower.includes('red') || lower.includes('ratu')) return images.redsamba;
+    if (lower.includes('heenati')) return images.heenati;
+    if (lower.includes('samba')) return images.samba;
+    if (lower.includes('kakulu')) return images.kakulu;
+    if (lower.includes('suwandel')) return images.suwandel;
+    if (lower.includes('basmathi') || lower.includes('basmati'))
+      return images.basmathi;
+    return images.other;
+  } catch (error) {
+    console.error('Error getting paddy image:', error);
+    return images.other;
+  }
 };
 
 const transactions = () => {
@@ -73,67 +78,140 @@ const transactions = () => {
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const [ispopup,setIsPopup] = useState<boolean>(false);
-  
-  
+  const [ispopup, setIsPopup] = useState<boolean>(false);
+  const [error, setError] = useState<string | null>(null);
 
-  const fetchAdminTransactions = () => {
-    const q = query(collection(db, 'transactions'), orderBy('createdAt', 'desc'));
-
-    const unsubscribe = onSnapshot(
-      q,
-      (querySnapshot) => {
-        const items: Transaction[] = querySnapshot.docs.map(
-          (doc) => ({ id: doc.id, ...doc.data() } as Transaction)
-        );
-        setTransactions(items);
-        setLoading(false);
-        setRefreshing(false);
-      },
-      (error) => {
-        console.error('Error fetching admin transactions:', error);
-        setLoading(false);
-        setRefreshing(false);
-      }
-    );
-
-    return unsubscribe;
+  const safeNavigate = (path: string) => {
+    try {
+      router.back();
+    } catch (error) {
+      console.error('Navigation error:', error);
+      Alert.alert('Error', 'Unable to navigate back');
+    }
   };
 
+  const fetchAdminTransactions = () => {
+    try {
+      const q = query(collection(db, 'transactions'), orderBy('createdAt', 'desc'));
 
+      const unsubscribe = onSnapshot(
+        q,
+        (querySnapshot) => {
+          try {
+            const items: Transaction[] = querySnapshot.docs.map((doc) => {
+              const data = doc.data();
+              return {
+                id: doc.id,
+                farmerUid: data.farmerUid || '',
+                vendorUid: data.vendorUid || '',
+                paddyId: data.paddyId || '',
+                paddyName: data.paddyName || 'Unknown',
+                measuredQty: Number(data.measuredQty) || 0,
+                price: Number(data.price) || 0,
+                createdAt: data.createdAt,
+                status: data.status || 'completed',
+                pId: Number(data.pId) || 0,
+              } as Transaction;
+            });
+            setTransactions(items);
+            setError(null);
+            setLoading(false);
+            setRefreshing(false);
+          } catch (error) {
+            console.error('Error processing transaction data:', error);
+            setError('Failed to process transaction data');
+            setLoading(false);
+            setRefreshing(false);
+          }
+        },
+        (error) => {
+          console.error('Error fetching admin transactions:', error);
+          setError('Failed to load transactions');
+          setLoading(false);
+          setRefreshing(false);
+          Alert.alert('Error', 'Failed to load transactions. Please check your connection.');
+        }
+      );
 
- 
+      return unsubscribe;
+    } catch (error) {
+      console.error('Error setting up transaction listener:', error);
+      setError('Failed to initialize transactions');
+      setLoading(false);
+      return undefined;
+    }
+  };
+
   useEffect(() => {
-    setLoading(true);
+    let isMounted = true;
     let unsubscribe: (() => void) | undefined;
 
-    
-      unsubscribe = fetchAdminTransactions();
-    
+    const initialize = async () => {
+      try {
+        setLoading(true);
+        if (isMounted) {
+          unsubscribe = fetchAdminTransactions();
+        }
+      } catch (error) {
+        console.error('Initialization error:', error);
+        if (isMounted) {
+          setError('Failed to initialize');
+          setLoading(false);
+        }
+      }
+    };
+
+    initialize();
 
     return () => {
+      isMounted = false;
       if (unsubscribe) {
-        unsubscribe();
+        try {
+          unsubscribe();
+        } catch (error) {
+          console.error('Error cleaning up:', error);
+        }
       }
     };
   }, [activeTab, user?.uid]);
 
-  const onRefresh = () => setRefreshing(true);
+  const onRefresh = () => {
+    setRefreshing(true);
+    setError(null);
+  };
 
-  const calculateTotal = () =>
-    transactions.reduce((sum, t) => sum + (t.price || 0), 0);
+  const calculateTotal = () => {
+    try {
+      return transactions.reduce((sum, t) => sum + (Number(t.price) || 0), 0);
+    } catch (error) {
+      console.error('Error calculating total:', error);
+      return 0;
+    }
+  };
 
-  const calculateTotalQty = () =>
-    transactions.reduce((sum, t) => sum + (t.measuredQty || 0), 0);
+  const calculateTotalQty = () => {
+    try {
+      return transactions.reduce((sum, t) => sum + (Number(t.measuredQty) || 0), 0);
+    } catch (error) {
+      console.error('Error calculating total quantity:', error);
+      return 0;
+    }
+  };
 
- 
   const TransactionCard = ({ item }: { item: Transaction }) => {
+    if (!item || !item.id) {
+      return null;
+    }
+
     return (
       <TouchableOpacity style={styles.card} activeOpacity={0.8}>
         <Image
           source={getPaddyImage(item.paddyName)}
           style={styles.cardImage}
           resizeMode="cover"
+          onError={(error) => {
+            console.error('Image loading error:', error.nativeEvent.error);
+          }}
         />
         <View style={styles.cardContent}>
           <View style={styles.cardHeader}>
@@ -153,17 +231,25 @@ const transactions = () => {
             <View style={styles.priceContainer}>
               <Ionicons name="leaf" size={18} color="#759226" />
               <Text style={styles.cardPrice}>
-                LKR {item.price?.toFixed(0) || '0'}
+                LKR {Number(item.price || 0).toFixed(0)}
               </Text>
             </View>
-            <Text style={styles.qtyText}>{item.measuredQty || 0} KG</Text>
+            <Text style={styles.qtyText}>{Number(item.measuredQty || 0)} KG</Text>
           </View>
         </View>
       </TouchableOpacity>
     );
   };
 
- 
+  const addStockPress = () => {
+    try {
+      setIsPopup(true);
+    } catch (error) {
+      console.error('Error opening modal:', error);
+      Alert.alert('Error', 'Unable to open add transaction form');
+    }
+  };
+
   if (loading) {
     return (
       <View style={styles.centerContainer}>
@@ -173,27 +259,43 @@ const transactions = () => {
     );
   }
 
-   const addStockPress = () => {
-    setIsPopup(true);
-  };
+  if (error) {
+    return (
+      <View style={styles.centerContainer}>
+        <Ionicons name="alert-circle" size={64} color="#ff6b6b" />
+        <Text style={styles.errorText}>{error}</Text>
+        <TouchableOpacity 
+          style={styles.retryButton}
+          onPress={() => {
+            setError(null);
+            setLoading(true);
+            fetchAdminTransactions();
+          }}
+        >
+          <Text style={styles.retryButtonText}>Retry</Text>
+        </TouchableOpacity>
+      </View>
+    );
+  }
+
   return (
     <View style={styles.container}>
       {/* Header */}
       <View style={styles.header}>
-        <TouchableOpacity onPress={() => router.back()}>
+        <TouchableOpacity onPress={()=>safeNavigate}>
           <Ionicons name="arrow-back" size={24} color="#000" />
         </TouchableOpacity>
         <Text style={styles.headerTitle}>Transactions</Text>
         <View style={{ width: 24 }} />
       </View>
- {/* Add Button */}
+
+      {/* Add Button */}
       <TouchableOpacity style={styles.selectBttn} onPress={addStockPress}>
         <Text style={{ color: '#fff', fontSize: 16 }}>Add New Transaction</Text>
         <View style={styles.round}>
           <Ionicons name="cube-outline" size={24} color="#759226" />
         </View>
       </TouchableOpacity>
-      
 
       {/* Stats */}
       <View style={styles.statsContainer}>
@@ -226,12 +328,13 @@ const transactions = () => {
       ) : (
         <FlatList
           data={transactions}
-          keyExtractor={(item) => item.id}
+          keyExtractor={(item, index) => item.id || `transaction-${index}`}
           renderItem={({ item }) => <TransactionCard item={item} />}
           contentContainerStyle={styles.listContainer}
           refreshControl={
             <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
           }
+          
         />
       )}
 
@@ -242,23 +345,8 @@ const transactions = () => {
           visible={ispopup}
           onRequestClose={() => setIsPopup(false)}
         >
-          <View
-            style={{
-              flex: 1,
-              justifyContent: "center",
-              alignItems: "center",
-              backgroundColor: "rgba(0,0,0,0.5)",
-            }}
-          >
-            <View
-              style={{
-                width: "90%",
-                height: 500,
-                backgroundColor: "white",
-                borderRadius: 10,
-                padding: 20,
-              }}
-            >
+          <View style={styles.modalOverlay}>
+            <View style={styles.modalContainer}>
               <AddTransaction setIspopup={setIsPopup} />
             </View>
           </View>
@@ -268,23 +356,40 @@ const transactions = () => {
   );
 };
 
-
 const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#f5f5f5',
-    
   },
   centerContainer: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
     backgroundColor: '#f5f5f5',
+    padding: 20,
   },
   loadingText: {
     marginTop: 12,
     fontSize: 16,
     color: '#666',
+  },
+  errorText: {
+    marginTop: 12,
+    fontSize: 16,
+    color: '#666',
+    textAlign: 'center',
+  },
+  retryButton: {
+    marginTop: 20,
+    backgroundColor: '#759226',
+    paddingHorizontal: 24,
+    paddingVertical: 12,
+    borderRadius: 8,
+  },
+  retryButtonText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: '600',
   },
   header: {
     flexDirection: 'row',
@@ -299,7 +404,7 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: '#333',
   },
-    selectBttn: {
+  selectBttn: {
     backgroundColor: '#000',
     height: 65,
     borderRadius: 36,
@@ -309,7 +414,7 @@ const styles = StyleSheet.create({
     paddingRight: 16,
     justifyContent: 'space-between',
     marginBottom: 20,
-    marginHorizontal:12
+    marginHorizontal: 12
   },
   round: {
     backgroundColor: '#fff',
@@ -318,31 +423,6 @@ const styles = StyleSheet.create({
     borderRadius: 20,
     justifyContent: 'center',
     alignItems: 'center',
-  },
-  tabContainer: {
-    flexDirection: 'row',
-    backgroundColor: '#fff',
-    paddingHorizontal: 16,
-    paddingBottom: 12,
-    gap: 8,
-  },
-  tab: {
-    flex: 1,
-    paddingVertical: 10,
-    borderRadius: 8,
-    backgroundColor: '#f0f0f0',
-    alignItems: 'center',
-  },
-  activeTab: {
-    backgroundColor: '#759226',
-  },
-  tabText: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#666',
-  },
-  activeTabText: {
-    color: '#fff',
   },
   statsContainer: {
     flexDirection: 'row',
@@ -459,6 +539,19 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: '#999',
     marginTop: 16,
+  },
+  modalOverlay: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: 'rgba(0,0,0,0.5)',
+  },
+  modalContainer: {
+    width: '90%',
+    height: 500,
+    backgroundColor: 'white',
+    borderRadius: 10,
+    padding: 20,
   },
 });
 

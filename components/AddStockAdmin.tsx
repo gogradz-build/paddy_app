@@ -3,46 +3,74 @@ import { useToaster } from '@/assets/ui/toaster';
 import { db } from '@/firebase/firebaseConfig';
 import { addDoc, collection, serverTimestamp } from 'firebase/firestore';
 import { useState } from 'react';
-import { Keyboard, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { Keyboard, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 
 interface AddStockAdminProps{
-  setIspopup:any;
+  setIspopup: any;
 }
-const AddStockAdmin = ({setIspopup}:AddStockAdminProps) => {
-  const [paddyName,setPaddyName] = useState<string>("");
-  const [paddyCode,setPaddyCode] =useState<string>("");
-  const [avgPrice,setAvgPrice] = useState<string>("");
+
+const AddStockAdmin = ({setIspopup}: AddStockAdminProps) => {
+  const [paddyName, setPaddyName] = useState<string>("");
+  const [paddyCode, setPaddyCode] = useState<string>("");
+  const [avgPrice, setAvgPrice] = useState<string>("");
   const [isLoading, setIsLoading] = useState<boolean>(false);
 
   const { showToaster } = useToaster();
 
-  const handleAdd=async ()=>{
-    Keyboard.dismiss();
-    if (paddyName.trim() === "" || paddyCode.trim() === ""||avgPrice.trim() === "") {
-      showToaster("Paddy Details Can't Be Empty.", "warning", 2000);
-    }
-    setIsLoading(true);
+  const handleAdd = async () => {
     try {
+      Keyboard.dismiss();
+      
+      // Validation
+      if (!paddyName.trim()) {
+        showToaster("Paddy name is required", "warning", 2000);
+        return;
+      }
+      
+      if (!paddyCode.trim()) {
+        showToaster("Paddy code is required", "warning", 2000);
+        return;
+      }
+      
+      if (!avgPrice.trim() || isNaN(Number(avgPrice)) || Number(avgPrice) <= 0) {
+        showToaster("Please enter a valid average price", "warning", 2000);
+        return;
+      }
+
+      setIsLoading(true);
+      
       await addDoc(collection(db, "paddy"), {
         name: paddyName.trim(),
         code: paddyCode.trim(),
         avgPrice: parseFloat(avgPrice),
         createdAt: serverTimestamp(),
       });
+      
       showToaster("Paddy added successfully!", "success", 2000);
+      
+      // Reset form
       setPaddyName("");
       setPaddyCode("");
       setAvgPrice("");
-      setIspopup(false);
+      
+      // Close modal
+      setTimeout(() => {
+        setIspopup(false);
+      }, 500);
+      
     } catch (error) {
       console.error("Error adding paddy:", error);
-      showToaster("Failed to add paddy.", "error", 2000);
+      showToaster("Failed to add paddy. Please try again.", "error", 2000);
     } finally {
       setIsLoading(false);
     }
   }
+
   return (
-    <View style={styles.container}>
+    <ScrollView 
+      style={styles.container}
+      keyboardShouldPersistTaps="handled"
+    >
       <View style={styles.header}>
         <TouchableOpacity onPress={() => setIspopup(false)}>
           <ArrowIcon size={24} color="#000" />
@@ -50,44 +78,56 @@ const AddStockAdmin = ({setIspopup}:AddStockAdminProps) => {
         <Text style={styles.headerText}>Add Avg Price</Text>
       </View>
       <View>
-        <Text style={styles.label}>Paddy Name</Text>
+        <Text style={styles.label}>
+          Paddy Name <Text style={styles.required}>*</Text>
+        </Text>
         <TextInput
           placeholder="Kiri Samba"
           style={styles.textInputField}
-          autoCapitalize="none"
           value={paddyName}
           onChangeText={setPaddyName}
+          editable={!isLoading}
         />
-        <Text style={styles.label}>Paddy Code</Text>
+        
+        <Text style={styles.label}>
+          Paddy Code <Text style={styles.required}>*</Text>
+        </Text>
         <TextInput
           placeholder="PB1001"
           style={styles.textInputField}
-          autoCapitalize="none"
           value={paddyCode}
           onChangeText={setPaddyCode}
+          editable={!isLoading}
         />
-        <Text style={styles.label}>Avg Price</Text>
+        
+        <Text style={styles.label}>
+          Average Price <Text style={styles.required}>*</Text>
+        </Text>
         <TextInput
           placeholder="50"
           style={styles.textInputField}
-          autoCapitalize="none"
-          keyboardType="number-pad"
+          keyboardType="numeric"
           value={avgPrice}
           onChangeText={setAvgPrice}
+          editable={!isLoading}
         />
+        
         <TouchableOpacity
           style={[styles.loginButton, isLoading && styles.loginButtonDisabled]}
           onPress={handleAdd}
           disabled={isLoading}
         >
-          <Text style={styles.loginButtonText}>Add Price</Text>
+          <Text style={styles.loginButtonText}>
+            {isLoading ? 'Adding...' : 'Add Price'}
+          </Text>
         </TouchableOpacity>
       </View>
-    </View>
+    </ScrollView>
   );
 }
 
-export default AddStockAdmin
+export default AddStockAdmin;
+
 const styles = StyleSheet.create({
   container: {
     flex: 1,
@@ -95,7 +135,6 @@ const styles = StyleSheet.create({
     paddingBottom: 16,
     paddingHorizontal: 16,
     paddingTop: 28,
-    width:'auto'
   },
   header: {
     flexDirection: 'row',
@@ -109,23 +148,14 @@ const styles = StyleSheet.create({
     fontSize: 24,
     fontWeight: '600',
   },
-  content: {
-    flex: 1,
-  },
-  itemCount: {
-    fontSize: 14,
-    color: '#666',
-    marginBottom: 16,
-    fontFamily: 'Inter-Regular',
-  },
-  listContainer: {
-    paddingBottom: 20,
-  },
   label: {
     alignSelf: 'flex-start',
     marginBottom: 4,
     fontFamily: 'Inter-SemiBold',
     fontSize: 14,
+  },
+  required: {
+    color: '#f44336',
   },
   textInputField: {
     width: '100%',
@@ -140,7 +170,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#fff',
     marginBottom: 16,
   },
-    loginButton: {
+  loginButton: {
     backgroundColor: '#759226',
     borderRadius: 8,
     paddingVertical: 14,
@@ -150,9 +180,9 @@ const styles = StyleSheet.create({
   loginButtonDisabled: {
     backgroundColor: '#a5b366',
   },
-    loginButtonText: {
+  loginButtonText: {
     color: '#fff',
     fontFamily: 'Inter-SemiBold',
     fontSize: 16,
   },
-})
+});
