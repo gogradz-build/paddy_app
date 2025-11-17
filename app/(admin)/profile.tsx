@@ -392,13 +392,13 @@ const profile = () => {
               <Ionicons name="location" color={"#4D96FF"} size={24} />
               <View style={styles.itemTextContainer}>
                 <Text style={styles.itemText}>Buyer Locations</Text>
-                {loadingLocations ? (
+                {/* {loadingLocations ? (
                   <ActivityIndicator size="small" color="#4D96FF" />
                 ) : (
                   <Text style={styles.itemSubText}>
                     {locationCount} total {locationCount === 1 ? "location" : "locations"}
                   </Text>
-                )}
+                )} */}
               </View>
             </View>
             <TouchableOpacity onPress={handleViewLocations}>
@@ -413,13 +413,13 @@ const profile = () => {
               <MaterialIcons name="agriculture" color={"#759226"} size={24} />
               <View style={styles.itemTextContainer}>
                 <Text style={styles.itemText}>Farmer Locations</Text>
-                {loadingLocations ? (
+                {/* {loadingLocations ? (
                   <ActivityIndicator size="small" color="#759226" />
                 ) : (
                   <Text style={styles.itemSubText}>
                     {farmerLocationCount} total {farmerLocationCount === 1 ? "farmer" : "farmers"}
                   </Text>
-                )}
+                )} */}
               </View>
             </View>
             <TouchableOpacity onPress={handleViewFarmerLocations}>

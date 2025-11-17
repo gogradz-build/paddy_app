@@ -2,9 +2,7 @@ import { firestore } from '@/firebase/firebaseConfig';
 import { Feather, Ionicons, MaterialIcons } from '@expo/vector-icons';
 import {
   collection,
-  getDocs,
-  query,
-  where
+  getDocs
 } from 'firebase/firestore';
 import React, { useEffect, useState } from 'react';
 import {
@@ -23,40 +21,30 @@ type LocationType = 'business' | 'home' | 'warehouse' | 'farm' | 'other';
 type LocationData = {
   id: string;
   Tid?: number;
-  locationId?: string | number;
-  userId: string;
-  userType: string;
-  userName: string;
-  userEmail: string;
   coordinates: {
     latitude: number;
     longitude: number;
   };
-  accuracy?: number;
-  altitude?: number;
-  heading?: number;
-  speed?: number;
-  address: {
-    street: string;
+  // Geocoded fields (will be fetched from API)
+  address?: {
+    street?: string;
     streetNumber?: string;
-    city: string;
-    district: string;
+    city?: string;
+    district?: string;
     region?: string;
     postalCode?: string;
     country?: string;
-    formattedAddress: string;
+    formattedAddress?: string;
   };
-  userProvidedDistrict?: string;
-  userProvidedCity?: string;
-  locationType: LocationType;
-  isPrimary: boolean;
-  isActive: boolean;
-  locationStatus: string;
-  notes: string;
-  deliveryInstructions: string;
-  createdAt: any;
-  updatedAt: any;
-  lastVerifiedAt?: any;
+  locationType?: LocationType;
+  isPrimary?: boolean;
+  isActive?: boolean;
+  locationStatus?: string;
+  notes?: string;
+  deliveryInstructions?: string;
+  createdAt?: any;
+  updatedAt?: any;
+  geocodingStatus?: 'loading' | 'success' | 'failed' | 'invalid_coords';
 };
 
 interface ViewAllLocationsProps {
@@ -82,22 +70,95 @@ const ViewAllLocations: React.FC<ViewAllLocationsProps> = ({
     filterLocations();
   }, [searchQuery, selectedFilter, locations]);
 
+  // Reverse geocoding function using Nominatim API
+  const reverseGeocode = async (latitude: number, longitude: number): Promise<any> => {
+    try {
+      const response = await fetch(
+        `https://nominatim.openstreetmap.org/reverse?format=json&lat=${latitude}&lon=${longitude}&zoom=18&addressdetails=1`,
+        {
+          headers: {
+            'Accept': 'application/json',
+            'User-Agent': 'smartpaddy/1.0.0 (com.umaaj.smartpaddy)'
+          }
+        }
+      );
+
+      if (!response.ok) {
+        throw new Error('Geocoding failed');
+      }
+
+      const data = await response.json();
+      return data;
+    } catch (error) {
+      console.error('Reverse geocoding error:', error);
+      return null;
+    }
+  };
+
+  // Parse geocoding response to our address format
+  const parseGeocodingResponse = (data: any): LocationData['address'] => {
+    if (!data || !data.address) {
+      return {
+        formattedAddress: 'Address not available',
+        street: '',
+        city: '',
+        district: '',
+        country: ''
+      };
+    }
+
+    const addr = data.address;
+    
+    return {
+      street: addr.road || addr.street || addr.hamlet || '',
+      streetNumber: addr.house_number || '',
+      city: addr.city || addr.town || addr.village || addr.municipality || '',
+      district: addr.county || addr.state_district || addr.suburb || '',
+      region: addr.state || addr.province || '',
+      postalCode: addr.postcode || '',
+      country: addr.country || '',
+      formattedAddress: data.display_name || 'Address not available'
+    };
+  };
+
+  // Determine location type based on address data
+  const determineLocationType = (address: any): LocationType => {
+    if (!address) return 'other';
+    
+    const fullAddress = address.display_name?.toLowerCase() || '';
+    const amenity = address.address?.amenity?.toLowerCase() || '';
+    const building = address.address?.building?.toLowerCase() || '';
+
+    if (amenity.includes('warehouse') || building.includes('warehouse')) {
+      return 'warehouse';
+    } else if (amenity.includes('farm') || fullAddress.includes('farm')) {
+      return 'farm';
+    } else if (amenity.includes('commercial') || amenity.includes('shop') || amenity.includes('office')) {
+      return 'business';
+    } else if (building.includes('residential') || address.address?.residential) {
+      return 'home';
+    }
+    
+    return 'other';
+  };
+
   const loadLocations = async () => {
     setLoading(true);
     try {
       const locationsRef = collection(firestore, 'locations');
-      const q = query(
-        locationsRef,
-        where('isActive', '==', true)
-      );
-
-      const querySnapshot = await getDocs(q);
+      // Get all documents since we only have Tid and coordinates
+      const querySnapshot = await getDocs(locationsRef);
       const locs: LocationData[] = [];
 
       querySnapshot.forEach((doc) => {
+        const data = doc.data();
         locs.push({
           id: doc.id,
-          ...doc.data(),
+          Tid: data.Tid,
+          coordinates: data.coordinates || { latitude: 0, longitude: 0 },
+          geocodingStatus: 'loading',
+          createdAt: data.createdAt,
+          isActive: true, // Set default value
         } as LocationData);
       });
 
@@ -108,11 +169,80 @@ const ViewAllLocations: React.FC<ViewAllLocationsProps> = ({
 
       setLocations(locs);
       setFilteredLocations(locs);
+
+      // Fetch geocoding data for each location
+      await fetchGeocodingForAllLocations(locs);
+
     } catch (error) {
       console.error('Error loading locations:', error);
       Alert.alert('Error', 'Failed to load locations');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const fetchGeocodingForAllLocations = async (locs: LocationData[]) => {
+    const updatedLocations = [...locs];
+
+    for (let i = 0; i < updatedLocations.length; i++) {
+      const location = updatedLocations[i];
+      const { latitude, longitude } = location.coordinates;
+
+      // Check if coordinates are valid
+      if (latitude === 0 && longitude === 0) {
+        updatedLocations[i] = {
+          ...location,
+          geocodingStatus: 'invalid_coords',
+          address: {
+            formattedAddress: 'Invalid coordinates (0, 0)',
+            street: 'N/A',
+            city: 'N/A',
+            district: 'N/A',
+            country: 'N/A'
+          },
+          locationType: 'other',
+          locationStatus: 'manual'
+        };
+      } else {
+        // Fetch geocoding data
+        const geocodedData = await reverseGeocode(latitude, longitude);
+        
+        if (geocodedData) {
+          const parsedAddress = parseGeocodingResponse(geocodedData);
+          const locationType = determineLocationType(geocodedData);
+          
+          updatedLocations[i] = {
+            ...location,
+            geocodingStatus: 'success',
+            address: parsedAddress,
+            locationType: locationType,
+            locationStatus: 'verified'
+          };
+        } else {
+          updatedLocations[i] = {
+            ...location,
+            geocodingStatus: 'failed',
+            address: {
+              formattedAddress: 'Unable to fetch address',
+              street: 'N/A',
+              city: 'N/A',
+              district: 'N/A',
+              country: 'N/A'
+            },
+            locationType: 'other',
+            locationStatus: 'manual'
+          };
+        }
+      }
+
+      // Update state progressively to show results as they load
+      setLocations([...updatedLocations]);
+      setFilteredLocations([...updatedLocations]);
+
+      // Add delay to respect API rate limits (1 request per second for Nominatim)
+      if (i < updatedLocations.length - 1) {
+        await new Promise(resolve => setTimeout(resolve, 1100));
+      }
     }
   };
 
@@ -133,9 +263,7 @@ const ViewAllLocations: React.FC<ViewAllLocationsProps> = ({
           loc.address?.city?.toLowerCase().includes(query) ||
           loc.address?.district?.toLowerCase().includes(query) ||
           loc.address?.street?.toLowerCase().includes(query) ||
-          loc.address?.formattedAddress?.toLowerCase().includes(query) ||
-          loc.userProvidedCity?.toLowerCase().includes(query) ||
-          loc.userProvidedDistrict?.toLowerCase().includes(query);
+          loc.address?.formattedAddress?.toLowerCase().includes(query);
       });
     }
 
@@ -151,7 +279,7 @@ const ViewAllLocations: React.FC<ViewAllLocationsProps> = ({
     { value: 'other', label: 'Other' },
   ];
 
-  const getStatusColor = (status: string) => {
+  const getStatusColor = (status?: string) => {
     switch (status) {
       case 'verified':
         return '#759226';
@@ -189,8 +317,6 @@ const ViewAllLocations: React.FC<ViewAllLocationsProps> = ({
         )}
       </View>
 
-      
-
       <View style={styles.resultInfo}>
         <Text style={styles.resultInfoText}>
           Showing {filteredLocations.length} of {locations.length} locations
@@ -199,111 +325,99 @@ const ViewAllLocations: React.FC<ViewAllLocationsProps> = ({
     </>
   );
 
-  const getLocationNumber = (location: LocationData) => {
-    if (location.Tid !== undefined && location.Tid !== null) {
-      return location.Tid;
-    }
-    return 'N/A';
+  const renderLocationCard = (location: LocationData) => {
+    const isLoading = location.geocodingStatus === 'loading';
+    const hasInvalidCoords = location.geocodingStatus === 'invalid_coords';
+
+    return (
+      <View key={location.id} style={styles.locationCard}>
+        <View style={styles.locationNumberBadge}>
+          <Text style={styles.locationNumberText}>
+            {location.Tid !== undefined && location.Tid !== null ? `#${location.Tid}` : 'N/A'}
+          </Text>
+        </View>
+
+        <View style={styles.statusBadgeContainer}>
+          {isLoading ? (
+            <View style={[styles.statusBadge, { backgroundColor: '#999' }]}>
+              <ActivityIndicator size="small" color="#fff" />
+            </View>
+          ) : (
+            <View style={[styles.statusBadge, { backgroundColor: getStatusColor(location.locationStatus) }]}>
+              <Text style={styles.statusBadgeText}>
+                {location.locationStatus === 'verified' ? 'GPS' : 'Manual'}
+              </Text>
+            </View>
+          )}
+        </View>
+
+        <View style={styles.dividerLine} />
+
+        {isLoading ? (
+          <View style={styles.loadingSection}>
+            <ActivityIndicator size="small" color="#759226" />
+            <Text style={styles.loadingText}>Fetching address details...</Text>
+          </View>
+        ) : hasInvalidCoords ? (
+          <View style={styles.errorSection}>
+            <Ionicons name="warning" size={24} color="#FF6B6B" />
+            <Text style={styles.errorText}>Invalid Coordinates</Text>
+            <Text style={styles.errorSubText}>Both latitude and longitude are 0</Text>
+          </View>
+        ) : (
+          <View style={styles.locationDetails}>
+            <View style={styles.locationTypeRow}>
+              <MaterialIcons name="location-on" size={20} color="#759226" />
+              <Text style={styles.locationType}>
+                {location.locationType 
+                  ? location.locationType.charAt(0).toUpperCase() + location.locationType.slice(1)
+                  : 'Unknown'}
+              </Text>
+            </View>
+
+            {location.address?.street && (
+              <View style={styles.detailRow}>
+                <MaterialIcons name="home" size={18} color="#666" />
+                <Text style={styles.detailText}>{location.address.street}</Text>
+              </View>
+            )}
+
+            {location.address?.city && (
+              <View style={styles.detailRow}>
+                <MaterialIcons name="location-city" size={18} color="#666" />
+                <Text style={styles.detailText}>{location.address.city}</Text>
+              </View>
+            )}
+
+            {location.address?.district && (
+              <View style={styles.detailRow}>
+                <MaterialIcons name="map" size={18} color="#666" />
+                <Text style={styles.detailText}>{location.address.district}</Text>
+              </View>
+            )}
+
+            {location.address?.formattedAddress && (
+              <View style={styles.fullAddressContainer}>
+                <Feather name="map-pin" size={16} color="#999" />
+                <Text style={styles.fullAddressText}>
+                  {location.address.formattedAddress}
+                </Text>
+              </View>
+            )}
+          </View>
+        )}
+
+        {!hasInvalidCoords && location.coordinates && (
+          <View style={styles.coordinatesContainer}>
+            <Ionicons name="navigate-circle" size={14} color="#999" />
+            <Text style={styles.coordinatesText}>
+              {location.coordinates.latitude.toFixed(6)}, {location.coordinates.longitude.toFixed(6)}
+            </Text>
+          </View>
+        )}
+      </View>
+    );
   };
-
-  const renderLocationCard = (location: LocationData) => (
-    <View key={location.id} style={styles.locationCard}>
-      <View style={styles.locationNumberBadge}>
-        <Text style={styles.locationNumberText}>
-          {location.Tid !== undefined && location.Tid !== null ? `#${location.Tid}` : 'N/A'}
-        </Text>
-      </View>
-
-      <View style={styles.statusBadgeContainer}>
-        <View style={[styles.statusBadge, { backgroundColor: getStatusColor(location.locationStatus) }]}>
-          <Text style={styles.statusBadgeText}>
-            {location.locationStatus === 'verified' ? 'GPS' : 'Manual'}
-          </Text>
-        </View>
-      </View>
-
-      <View style={styles.dividerLine} />
-
-      <View style={styles.locationDetails}>
-        <View style={styles.locationTypeRow}>
-          <MaterialIcons name="location-on" size={20} color="#759226" />
-          <Text style={styles.locationType}>
-            {location.locationType.charAt(0).toUpperCase() + location.locationType.slice(1)}
-          </Text>
-        </View>
-
-        {location.address?.street && (
-          <View style={styles.detailRow}>
-            <MaterialIcons name="home" size={18} color="#666" />
-            <Text style={styles.detailText}>{location.address.street}</Text>
-          </View>
-        )}
-
-        {(location.userProvidedCity || location.address?.city) && (
-          <View style={styles.detailRow}>
-            <MaterialIcons name="location-city" size={18} color="#666" />
-            <Text style={styles.detailText}>
-              {location.userProvidedCity || location.address?.city}
-            </Text>
-          </View>
-        )}
-
-        {(location.userProvidedDistrict || location.address?.district) && (
-          <View style={styles.detailRow}>
-            <MaterialIcons name="map" size={18} color="#666" />
-            <Text style={styles.detailText}>
-              {location.userProvidedDistrict || location.address?.district}
-            </Text>
-          </View>
-        )}
-
-        {location.address?.formattedAddress && (
-          <View style={styles.fullAddressContainer}>
-            <Feather name="map-pin" size={16} color="#999" />
-            <Text style={styles.fullAddressText}>
-              {location.address.formattedAddress}
-            </Text>
-          </View>
-        )}
-      </View>
-
-      {(location.notes || location.deliveryInstructions) && (
-        <>
-          <View style={styles.dividerLine} />
-          <View style={styles.additionalInfo}>
-            {location.notes && (
-              <View style={styles.infoBlock}>
-                <View style={styles.infoHeader}>
-                  <Feather name="info" size={14} color="#666" />
-                  <Text style={styles.infoLabel}>Notes</Text>
-                </View>
-                <Text style={styles.infoText}>{location.notes}</Text>
-              </View>
-            )}
-
-            {location.deliveryInstructions && (
-              <View style={styles.infoBlock}>
-                <View style={styles.infoHeader}>
-                  <Ionicons name="navigate" size={14} color="#666" />
-                  <Text style={styles.infoLabel}>Delivery Instructions</Text>
-                </View>
-                <Text style={styles.infoText}>{location.deliveryInstructions}</Text>
-              </View>
-            )}
-          </View>
-        </>
-      )}
-
-      {location.coordinates && (location.coordinates.latitude !== 0 || location.coordinates.longitude !== 0) && (
-        <View style={styles.coordinatesContainer}>
-          <Ionicons name="navigate-circle" size={14} color="#999" />
-          <Text style={styles.coordinatesText}>
-            {location.coordinates.latitude.toFixed(6)}, {location.coordinates.longitude.toFixed(6)}
-          </Text>
-        </View>
-      )}
-    </View>
-  );
 
   return (
     <View style={styles.container}>
@@ -390,33 +504,6 @@ const styles = StyleSheet.create({
     fontFamily: 'Inter-Regular',
     color: '#000',
   },
-  filterContainer: {
-    marginBottom: 12,
-  },
-  filterContent: {
-    gap: 10,
-    paddingBottom: 4,
-  },
-  filterChip: {
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    borderRadius: 20,
-    backgroundColor: '#F8F8F8',
-    borderWidth: 1,
-    borderColor: '#E0E0E0',
-  },
-  filterChipActive: {
-    backgroundColor: '#759226',
-    borderColor: '#759226',
-  },
-  filterChipText: {
-    fontSize: 14,
-    fontFamily: 'Inter-SemiBold',
-    color: '#666',
-  },
-  filterChipTextActive: {
-    color: '#fff',
-  },
   resultInfo: {
     paddingVertical: 8,
     marginBottom: 8,
@@ -463,25 +550,6 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#E8E8E8',
   },
-  primaryBadge: {
-    position: 'absolute',
-    top: 12,
-    right: 12,
-    backgroundColor: '#759226',
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 12,
-    gap: 4,
-    zIndex: 1,
-  },
-  primaryBadgeText: {
-    color: '#fff',
-    fontSize: 10,
-    fontFamily: 'Inter-SemiBold',
-    letterSpacing: 0.5,
-  },
   locationNumberBadge: {
     position: 'absolute',
     top: 12,
@@ -503,45 +571,12 @@ const styles = StyleSheet.create({
     marginBottom: 12,
     paddingTop: 8,
   },
-  userInfoSection: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'flex-start',
-    marginBottom: 12,
-    paddingRight: 80,
-  },
-  userInfoHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    flex: 1,
-  },
-  userIcon: {
-    width: 40,
-    height: 40,
-    backgroundColor: '#E3F2FD',
-    borderRadius: 20,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginRight: 12,
-  },
-  userDetails: {
-    flex: 1,
-  },
-  userName: {
-    fontSize: 16,
-    fontFamily: 'Inter-SemiBold',
-    color: '#000',
-    marginBottom: 2,
-  },
-  userEmail: {
-    fontSize: 12,
-    fontFamily: 'Inter-Regular',
-    color: '#666',
-  },
   statusBadge: {
     paddingHorizontal: 8,
     paddingVertical: 4,
     borderRadius: 8,
+    minWidth: 60,
+    alignItems: 'center',
   },
   statusBadgeText: {
     fontSize: 10,
@@ -554,6 +589,26 @@ const styles = StyleSheet.create({
     height: 1,
     backgroundColor: '#E0E0E0',
     marginVertical: 12,
+  },
+  loadingSection: {
+    alignItems: 'center',
+    paddingVertical: 20,
+    gap: 10,
+  },
+  errorSection: {
+    alignItems: 'center',
+    paddingVertical: 20,
+    gap: 8,
+  },
+  errorText: {
+    fontSize: 16,
+    fontFamily: 'Inter-SemiBold',
+    color: '#FF6B6B',
+  },
+  errorSubText: {
+    fontSize: 13,
+    fontFamily: 'Inter-Regular',
+    color: '#999',
   },
   locationDetails: {
     gap: 10,
@@ -594,33 +649,6 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontFamily: 'Inter-Regular',
     color: '#666',
-    lineHeight: 18,
-  },
-  additionalInfo: {
-    gap: 10,
-  },
-  infoBlock: {
-    backgroundColor: '#fff',
-    padding: 12,
-    borderRadius: 8,
-  },
-  infoHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    marginBottom: 6,
-  },
-  infoLabel: {
-    fontSize: 12,
-    fontFamily: 'Inter-SemiBold',
-    color: '#666',
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
-  },
-  infoText: {
-    fontSize: 13,
-    fontFamily: 'Inter-Regular',
-    color: '#333',
     lineHeight: 18,
   },
   coordinatesContainer: {
